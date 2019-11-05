@@ -28,7 +28,7 @@ namespace ErrorCodes
     extern const int VALUE_IS_OUT_OF_RANGE_OF_DATA_TYPE;
 }
 
-template <typename T>
+template <typename T, typename SFINAE = void>
 struct NearestFieldTypeImpl;
 
 template <typename T>
@@ -192,6 +192,13 @@ template <> struct NearestFieldTypeImpl<bool> { using Type = UInt64; };
 template <> struct NearestFieldTypeImpl<Null> { using Type = Null; };
 
 template <> struct NearestFieldTypeImpl<AggregateFunctionStateData> { using Type = AggregateFunctionStateData; };
+
+// For enum types, use the field type that corresponds to their underlying type.
+template <typename T>
+struct NearestFieldTypeImpl<T, std::enable_if_t<std::is_enum_v<T>>>
+{
+    using Type = NearestFieldType<std::underlying_type_t<T>>;
+};
 
 /** 32 is enough. Round number is used for alignment and for better arithmetic inside std::vector.
   * NOTE: Actually, sizeof(std::string) is 32 when using libc++, so Field is 40 bytes.
