@@ -50,6 +50,7 @@ void registerFunctionBayesAB(FunctionFactory &);
 #endif
 void registerFunctionTid(FunctionFactory & factory);
 void registerFunctionLogTrace(FunctionFactory & factory);
+void registerFunctionStrLen(FunctionFactory & factory);
 
 #if USE_SSL
 void registerFunctionEncrypt(FunctionFactory & factory);
@@ -116,6 +117,7 @@ void registerFunctions()
 #endif
     registerFunctionTid(factory);
     registerFunctionLogTrace(factory);
+    registerFunctionStrLen(factory);
 }
 
 }
