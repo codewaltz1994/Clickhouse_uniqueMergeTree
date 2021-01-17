@@ -43,7 +43,7 @@ public:
     String getName() const override { return "aggStrLen"; }
 
     AggregateFunctionStrLen(const DataTypes & argument_types_)
-        : IAggregateFunctionDataHelper<Data, AggregateFunctionStrLen<Data>>(argument_types_, {}), scale(0)
+        : IAggregateFunctionDataHelper<Data, AggregateFunctionStrLen<Data>>(argument_types_, {})
     {}
 
     DataTypePtr getReturnType() const override { return std::make_shared<DataTypeUInt64>(); }
@@ -75,9 +75,6 @@ public:
         auto & column = static_cast<ColumnVector<UInt64> &>(to);
         column.getData().push_back(this->data(place).get());
     }
-
-private:
-    UInt32 scale;
 };
 
 }
