@@ -13,6 +13,7 @@
 #    include <aws/s3/model/UploadPartRequest.h>
 #    include <common/logger_useful.h>
 
+#    include <thread>
 #    include <utility>
 
 
@@ -98,7 +99,7 @@ void WriteBufferFromS3::finalizeImpl()
     else
     {
         /// Write rest of the data as last part.
-        writePart();
+        writePartParallel();
         completeMultipartUpload();
     }
 
@@ -162,6 +163,58 @@ void WriteBufferFromS3::writePart()
     }
     else
         throw Exception(outcome.GetError().GetMessage(), ErrorCodes::S3_ERROR);
+}
+
+void WriteBufferFromS3::writePartParallel()
+{
+    if (temporary_buffer->tellp() <= 0)
+        return;
+
+    auto string = temporary_buffer->str();
+    auto total_size = string.size();
+    const char * data = string.data();
+
+    auto upload_thread = [&](size_t subpart_id, size_t part_number) {
+        /// split buffer
+        auto buffer = Aws::MakeShared<Aws::StringStream>("temporary buffer");
+
+        size_t buffer_size = (subpart_size * (subpart_id + 1)) > total_size ? total_size - (subpart_size * subpart_id) : subpart_size;
+
+        buffer->write(data + (subpart_size * subpart_id), buffer_size);
+
+        Aws::S3::Model::UploadPartRequest req;
+        req.SetBucket(bucket);
+        req.SetKey(key);
+        req.SetPartNumber(part_number);
+        req.SetUploadId(multipart_upload_id);
+        req.SetContentLength(buffer->tellp());
+        req.SetBody(buffer);
+
+        auto outcome = client_ptr->UploadPart(req);
+
+        LOG_TRACE(
+            log, "Writing part. Bucket: {}, Key: {}, Upload_id: {}, Data size: {}", bucket, key, multipart_upload_id, buffer->tellp());
+
+        if (outcome.IsSuccess())
+        {
+            auto etag = outcome.GetResult().GetETag();
+            part_tags[part_number - 1] = etag;
+            LOG_DEBUG(log, "Writing part finished. Total parts: {}, Upload_id: {}, Etag: {}", part_tags.size(), multipart_upload_id, etag);
+        }
+        else
+            throw Exception(outcome.GetError().GetMessage(), ErrorCodes::S3_ERROR);
+    };
+
+    size_t subpart_number = (total_size % subpart_size) ? total_size / subpart_size + 1 : total_size / subpart_size;
+    size_t current_part_number = part_tags.size();
+
+    part_tags.resize(current_part_number + subpart_number);
+
+    for (size_t subpart_id = 0; subpart_id < subpart_number; ++subpart_id)
+    {
+        std::thread t(upload_thread, subpart_id, current_part_number + subpart_id + 1);
+        t.join();
+    }
 }
 
 void WriteBufferFromS3::completeMultipartUpload()

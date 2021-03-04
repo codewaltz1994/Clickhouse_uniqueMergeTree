@@ -21,6 +21,7 @@ class S3Client;
 
 namespace DB
 {
+const size_t subpart_size = 4 * 1024 * 1024;
 
 /**
  * Buffer to write a data to a S3 object with specified bucket and key.
@@ -71,6 +72,7 @@ private:
 
     void createMultipartUpload();
     void writePart();
+    void writePartParallel();
     void completeMultipartUpload();
 
     void makeSinglepartUpload();
