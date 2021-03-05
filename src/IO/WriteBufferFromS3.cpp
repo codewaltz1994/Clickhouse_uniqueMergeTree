@@ -210,11 +210,15 @@ void WriteBufferFromS3::writePartParallel()
 
     part_tags.resize(current_part_number + subpart_number);
 
+    std::vector<std::thread> threads;
+    threads.resize(subpart_number);
     for (size_t subpart_id = 0; subpart_id < subpart_number; ++subpart_id)
     {
-        std::thread t(upload_thread, subpart_id, current_part_number + subpart_id + 1);
-        t.join();
+        threads.emplace_back(upload_thread, subpart_id, current_part_number + subpart_id + 1);
     }
+
+    for (auto & t : threads)
+        t.join();
 }
 
 void WriteBufferFromS3::completeMultipartUpload()
