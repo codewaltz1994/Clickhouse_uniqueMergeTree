@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <common/extended_types.h>
+#include <common/defines.h>
 
 
 namespace DB
@@ -14,7 +15,7 @@ namespace DB
 struct Null {};
 
 /// Ignore strange gcc warning https://gcc.gnu.org/bugzilla/show_bug.cgi?id=55776
-#if !__clang__
+#if !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
 #endif
@@ -58,7 +59,7 @@ enum class TypeIndex
     LowCardinality,
     Map,
 };
-#if !__clang__
+#if !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 
@@ -157,7 +158,7 @@ struct Decimal
             return convertTo<typename U::NativeType>();
         }
         else
-            return bigint_cast<U>(value);
+            return static_cast<U>(value);
     }
 
     const Decimal<T> & operator += (const T & x) { value += x; return *this; }
@@ -165,6 +166,9 @@ struct Decimal
     const Decimal<T> & operator *= (const T & x) { value *= x; return *this; }
     const Decimal<T> & operator /= (const T & x) { value /= x; return *this; }
     const Decimal<T> & operator %= (const T & x) { value %= x; return *this; }
+
+    /// This is to avoid UB for sumWithOverflow()
+    void NO_SANITIZE_UNDEFINED addOverflow(const T & x) { value += x; }
 
     T value;
 };

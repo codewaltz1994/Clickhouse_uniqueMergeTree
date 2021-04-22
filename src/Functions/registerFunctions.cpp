@@ -45,6 +45,7 @@ void registerFunctionsUnixTimestamp64(FunctionFactory & factory);
 void registerFunctionBitHammingDistance(FunctionFactory & factory);
 void registerFunctionTupleHammingDistance(FunctionFactory & factory);
 void registerFunctionsStringHash(FunctionFactory & factory);
+void registerFunctionValidateNestedArraySizes(FunctionFactory & factory);
 #if !defined(ARCADIA_BUILD)
 void registerFunctionBayesAB(FunctionFactory &);
 #endif
@@ -104,6 +105,7 @@ void registerFunctions()
     registerFunctionBitHammingDistance(factory);
     registerFunctionTupleHammingDistance(factory);
     registerFunctionsStringHash(factory);
+    registerFunctionValidateNestedArraySizes(factory);
 
 #if !defined(ARCADIA_BUILD)
     registerFunctionBayesAB(factory);
