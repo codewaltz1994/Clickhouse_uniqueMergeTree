@@ -75,6 +75,7 @@ public:
         auto & column = static_cast<ColumnVector<UInt64> &>(to);
         column.getData().push_back(this->data(place).get());
     }
-};
 
+    bool allocatesMemoryInArena() const override { return false; }
+};
 }

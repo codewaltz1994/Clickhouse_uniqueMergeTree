@@ -23,7 +23,7 @@ namespace
 
     public:
         static constexpr auto name = "strLen";
-        static FunctionPtr create(const Context &) { return std::make_shared<FunctionStrLen>(); }
+        static FunctionPtr create(ContextPtr) { return std::make_shared<FunctionStrLen>(); }
 
         String getName() const override { return name; }
 

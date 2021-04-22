@@ -15,13 +15,13 @@ namespace ErrorCodes
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
 }
 
-ColumnsDescription TableFunctionContributors::getActualTableStructure(const Context & /*context*/) const
+ColumnsDescription TableFunctionContributors::getActualTableStructure(ContextPtr /*context*/) const
 {
     return ColumnsDescription{{{"name", std::make_shared<DataTypeString>()}}};
 }
 
 StoragePtr TableFunctionContributors::executeImpl(
-    const ASTPtr & /*ast_function*/, const Context & , const std::string & table_name, ColumnsDescription /*cached_columns*/) const
+    const ASTPtr & /*ast_function*/, ContextPtr, const std::string & table_name, ColumnsDescription /*cached_columns*/) const
 {
     auto res = StorageSystemContributors::create(StorageID(getDatabaseName(), table_name));
     res->startup();
