@@ -27,6 +27,19 @@ namespace ErrorCodes
     extern const int SEEK_POSITION_OUT_OF_BOUND;
 }
 
+namespace
+{
+template <typename Result, typename Error>
+void throwIfError(Aws::Utils::Outcome<Result, Error> & response)
+{
+    if (!response.IsSuccess())
+    {
+        const auto & err = response.GetError();
+        throw Exception(err.GetMessage() + ", after retry exception", static_cast<int>(err.GetErrorType()));
+    }
+}
+}
+
 
 ReadBufferFromS3::ReadBufferFromS3(
     std::shared_ptr<Aws::S3::S3Client> client_ptr_, const String & bucket_, const String & key_, size_t buffer_size_)
@@ -34,6 +47,32 @@ ReadBufferFromS3::ReadBufferFromS3(
 {
 }
 
+bool ReadBufferFromS3::tryNextImpl()
+{
+    Stopwatch watch;
+    auto res = impl->next();
+    watch.stop();
+    ProfileEvents::increment(ProfileEvents::S3ReadMicroseconds, watch.elapsedMicroseconds());
+    auto already_read2 = dynamic_cast<ReadBufferFromIStream *>(impl.get())->already_read;
+    LOG_TRACE(
+        log,
+        "Read S3 object. Bucket: {}, Key: {}, Offset: {}, already read: {}, gcount: {}",
+        bucket,
+        key,
+        std::to_string(offset),
+        std::to_string(already_read),
+        std::to_string(already_read2));
+    if (!res)
+        return false;
+
+    internal_buffer = impl->buffer();
+
+    ProfileEvents::increment(ProfileEvents::S3ReadBytes, internal_buffer.size());
+
+    working_buffer = internal_buffer;
+
+    return true;
+}
 
 bool ReadBufferFromS3::nextImpl()
 {
@@ -42,20 +81,26 @@ bool ReadBufferFromS3::nextImpl()
         impl = initialize();
         initialized = true;
     }
-
-    Stopwatch watch;
-    auto res = impl->next();
-    watch.stop();
-    ProfileEvents::increment(ProfileEvents::S3ReadMicroseconds, watch.elapsedMicroseconds());
-
-    if (!res)
-        return false;
-    internal_buffer = impl->buffer();
-
-    ProfileEvents::increment(ProfileEvents::S3ReadBytes, internal_buffer.size());
-
-    working_buffer = internal_buffer;
-    return true;
+	try
+    {
+        bool res = tryNextImpl();
+        return res;
+    }
+    catch (const Exception & e)
+    {
+        LOG_TRACE(log, "yyyyyggll");
+        already_read += dynamic_cast<ReadBufferFromIStream *>(impl.get())->already_read;
+        LOG_TRACE(
+            log,
+            "Read S3 object exception {}, re-initialize. Bucket: {}, Key: {}, Offset: {}, AlreadyRead: {}",
+            e.message(),
+            bucket,
+            key,
+            toString(offset),
+            toString(already_read));
+        impl = initialize();
+    }
+    return tryNextImpl();
 }
 
 off_t ReadBufferFromS3::seek(off_t offset_, int whence)
@@ -82,25 +127,46 @@ off_t ReadBufferFromS3::getPosition()
 
 std::unique_ptr<ReadBuffer> ReadBufferFromS3::initialize()
 {
-    LOG_TRACE(log, "Read S3 object. Bucket: {}, Key: {}, Offset: {}", bucket, key, std::to_string(offset));
+    auto uuid = UUIDHelpers::generateV4();
+    LOG_TRACE(log, "Read S3 object. Bucket: {}, Key: {}, Offset: {}, uuid: {}", bucket, key, std::to_string(offset), toString(uuid));
+    LOG_DEBUG(log, "uuid = " + toString(uuid));
 
     Aws::S3::Model::GetObjectRequest req;
     req.SetBucket(bucket);
     req.SetKey(key);
-    if (offset != 0)
-        req.SetRange("bytes=" + std::to_string(offset) + "-");
 
-    Aws::S3::Model::GetObjectOutcome outcome = client_ptr->GetObject(req);
+	auto new_offset = offset + already_read;
+    if (new_offset != 0)
+        req.SetRange("bytes=" + std::to_string(new_offset) + "-");
 
-    if (outcome.IsSuccess())
+    int retry = 8;
+    long sleep = 10;
+    while (retry > 0)
     {
-        read_result = outcome.GetResultWithOwnership();
-        return std::make_unique<ReadBufferFromIStream>(read_result.GetBody(), buffer_size);
+        try
+        {
+            Aws::S3::Model::GetObjectOutcome outcome = client_ptr->GetObject(req);
+
+            throwIfError(outcome);
+
+            read_result = outcome.GetResultWithOwnership();
+            auto len = read_result.GetContentLength();
+            if (!len)
+                LOG_DEBUG(log, "Content Length = 0");
+            auto res = std::make_unique<ReadBufferFromIStream>(read_result.GetBody(), buffer_size);
+            return res;
+        }
+        catch (Exception & e)
+        {
+            if (--retry == 0)
+                throw e;
+            Poco::Thread::sleep(sleep);
+            sleep *= 2;
+        }
     }
-    else
-        throw Exception(outcome.GetError().GetMessage(), ErrorCodes::S3_ERROR);
+    return nullptr;
 }
 
 }
 
-#endif
+#    endif

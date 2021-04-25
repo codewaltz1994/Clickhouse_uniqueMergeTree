@@ -4,6 +4,7 @@
 
 #    include <IO/WriteBufferFromS3.h>
 #    include <IO/WriteHelpers.h>
+#    include <Common/Exception.h>
 #    include <Common/MemoryTracker.h>
 
 #    include <aws/s3/S3Client.h>
@@ -15,15 +16,30 @@
 
 #    include <utility>
 
+#    include <Core/Types.h>
+#    include <IO/HTTPCommon.h>
 
 namespace ProfileEvents
 {
     extern const Event S3WriteBytes;
 }
 
-
 namespace DB
 {
+namespace ErrorCodes
+{
+extern const int S3_ERROR;
+}
+
+template <typename Result, typename Error>
+void throwIfError(Aws::Utils::Outcome<Result, Error> & response)
+{
+    if (!response.IsSuccess())
+    {
+        const auto & err = response.GetError();
+        throw Exception(std::to_string(static_cast<int>(err.GetErrorType())) + ": " + err.GetMessage(), ErrorCodes::S3_ERROR);
+    }
+}
 // S3 protocol does not allow to have multipart upload with more than 10000 parts.
 // In case server does not return an error on exceeding that number, we print a warning
 // because custom S3 implementation may allow relaxed requirements on that.
@@ -72,7 +88,7 @@ void WriteBufferFromS3::nextImpl()
 
     if (!multipart_upload_id.empty() && last_part_size > minimum_upload_part_size)
     {
-        writePart();
+        writePartParallel(subpart_size_for_merge_);
         allocateBuffer();
     }
 }
@@ -105,7 +121,7 @@ void WriteBufferFromS3::finalizeImpl()
     else
     {
         /// Write rest of the data as last part.
-        writePart();
+        writePartParallel(subpart_size_for_last_);
         completeMultipartUpload();
     }
 
@@ -132,15 +148,32 @@ void WriteBufferFromS3::createMultipartUpload()
     if (object_metadata.has_value())
         req.SetMetadata(object_metadata.value());
 
-    auto outcome = client_ptr->CreateMultipartUpload(req);
-
-    if (outcome.IsSuccess())
+    int retry = 8;
+    long sleep = 10;
+    while (retry > 0)
     {
-        multipart_upload_id = outcome.GetResult().GetUploadId();
-        LOG_DEBUG(log, "Multipart upload has created. Bucket: {}, Key: {}, Upload id: {}", bucket, key, multipart_upload_id);
+        try
+        {
+            auto outcome = client_ptr->CreateMultipartUpload(req);
+
+            throwIfError(outcome);
+
+            if (outcome.IsSuccess())
+            {
+                multipart_upload_id = outcome.GetResult().GetUploadId();
+                LOG_DEBUG(log, "Multipart upload has created. Bucket: {}, Key: {}, Upload id: {}", bucket, key, multipart_upload_id);
+            }
+
+            retry = 0;
+        }
+        catch (Exception &)
+        {
+            if (--retry == 0)
+                throw;
+            Poco::Thread::sleep(sleep);
+            sleep *= 2;
+        }
     }
-    else
-        throw Exception(outcome.GetError().GetMessage(), ErrorCodes::S3_ERROR);
 }
 
 void WriteBufferFromS3::writePart()
@@ -185,6 +218,90 @@ void WriteBufferFromS3::writePart()
         throw Exception(outcome.GetError().GetMessage(), ErrorCodes::S3_ERROR);
 }
 
+void WriteBufferFromS3::writePartParallel(size_t subpart_size)
+{
+    if (temporary_buffer->tellp() <= 0)
+        return;
+
+    auto string = temporary_buffer->str();
+    auto total_size = string.size();
+    const char * data = string.data();
+
+    size_t subpart_number = total_size / subpart_size;
+    if (!subpart_number)
+        subpart_number = 1;
+    size_t current_part_number = part_tags.size();
+
+    if (part_tags.size() + subpart_number >= S3_WARN_MAX_PARTS)
+    {
+        throw Exception("Max part number exceed.", ErrorCodes::S3_ERROR);
+    }
+
+    part_tags.resize(current_part_number + subpart_number);
+
+    auto upload_thread = [&](size_t subpart_id, size_t part_number) {
+        /// split buffer
+        auto buffer = Aws::MakeShared<Aws::StringStream>("temporary buffer");
+
+        size_t buffer_size = subpart_id < subpart_number - 1 ? subpart_size : total_size - subpart_id * subpart_size;
+
+        buffer->write(data + (subpart_size * subpart_id), buffer_size);
+
+        Aws::S3::Model::UploadPartRequest req;
+        req.SetBucket(bucket);
+        req.SetKey(key);
+        req.SetPartNumber(part_number);
+        req.SetUploadId(multipart_upload_id);
+        req.SetContentLength(buffer->tellp());
+        req.SetBody(buffer);
+
+        LOG_TRACE(
+            log,
+            "Writing part in parallel. Bucket: {}, Key: {}, Upload_id: {}, Data size: {}, Part Number: {}",
+            bucket,
+            key,
+            multipart_upload_id,
+            req.GetContentLength(),
+            part_number);
+
+        int retry = 8;
+        long sleep = 10;
+        while (retry > 0)
+        {
+            try
+            {
+                auto outcome = client_ptr->UploadPart(req);
+
+                throwIfError(outcome);
+
+                auto etag = outcome.GetResult().GetETag();
+                part_tags[part_number - 1] = etag;
+                LOG_DEBUG(
+                    log, "Writing part finished. Total parts: {}, Upload_id: {}, Etag: {}", part_tags.size(), multipart_upload_id, etag);
+                retry = 0;
+            }
+            catch (Exception &)
+            {
+                if (--retry == 0)
+                    throw;
+                Poco::Thread::sleep(sleep);
+                sleep *= 2;
+            }
+        }
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(subpart_number);
+    for (size_t subpart_id = 0; subpart_id < subpart_number; ++subpart_id)
+    {
+        threads.emplace_back(upload_thread, subpart_id, current_part_number + subpart_id + 1);
+    }
+
+    for (auto & t : threads)
+        t.join();
+}
+
+
 void WriteBufferFromS3::completeMultipartUpload()
 {
     LOG_DEBUG(log, "Completing multipart upload. Bucket: {}, Key: {}, Upload_id: {}, Parts: {}", bucket, key, multipart_upload_id, part_tags.size());
@@ -206,12 +323,34 @@ void WriteBufferFromS3::completeMultipartUpload()
 
     req.SetMultipartUpload(multipart_upload);
 
-    auto outcome = client_ptr->CompleteMultipartUpload(req);
+    int retry = 8;
+    long sleep = 10;
+    while (retry > 0)
+    {
+        try
+        {
+            auto outcome = client_ptr->CompleteMultipartUpload(req);
 
-    if (outcome.IsSuccess())
-        LOG_DEBUG(log, "Multipart upload has completed. Bucket: {}, Key: {}, Upload_id: {}, Parts: {}", bucket, key, multipart_upload_id, part_tags.size());
-    else
-        throw Exception(outcome.GetError().GetMessage(), ErrorCodes::S3_ERROR);
+            throwIfError(outcome);
+
+            if (outcome.IsSuccess())
+                LOG_DEBUG(
+                    log,
+                    "Multipart upload has completed. Bucket: {}, Key: {}, Upload_id: {}, Parts: {}",
+                    bucket,
+                    key,
+                    multipart_upload_id,
+                    part_tags.size());
+            retry = 0;
+        }
+        catch (Exception &)
+        {
+            if (--retry == 0)
+                throw;
+            Poco::Thread::sleep(sleep);
+            sleep *= 2;
+        }
+    }
 }
 
 void WriteBufferFromS3::makeSinglepartUpload()
@@ -237,12 +376,29 @@ void WriteBufferFromS3::makeSinglepartUpload()
     if (object_metadata.has_value())
         req.SetMetadata(object_metadata.value());
 
-    auto outcome = client_ptr->PutObject(req);
+    int retry = 8;
+    long sleep = 10;
+    while (retry > 0)
+    {
+        try
+        {
+            auto outcome = client_ptr->PutObject(req);
 
-    if (outcome.IsSuccess())
-        LOG_DEBUG(log, "Single part upload has completed. Bucket: {}, Key: {}, Object size: {}", bucket, key, req.GetContentLength());
-    else
-        throw Exception(outcome.GetError().GetMessage(), ErrorCodes::S3_ERROR);
+            throwIfError(outcome);
+
+            if (outcome.IsSuccess())
+                LOG_DEBUG(
+                    log, "Single part upload has completed. Bucket: {}, Key: {}, Object size: {}", bucket, key, req.GetContentLength());
+            retry = 0;
+        }
+        catch (Exception &)
+        {
+            if (--retry == 0)
+                throw;
+            Poco::Thread::sleep(sleep);
+            sleep *= 2;
+        }
+    }
 }
 
 }
