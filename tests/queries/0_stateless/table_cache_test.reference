@@ -1,0 +1,8 @@
+CREATE TABLE default.t\n(\n    `n` Int8,\n    `s` String,\n    CACHE n FIFO c1(INTERVAL 1 Hour, INTERVAL 2 Day)\n)\nENGINE = MergeTree\nORDER BY n\nCACHE CS c1(INTERVAL 2 Minute, INTERVAL 3 Month)\nSETTINGS index_granularity = 8192
+ 
+CREATE TABLE default.t\n(\n    `n` Int8,\n    `s` String,\n    CACHE n FIFO c1(INTERVAL 1 Hour, INTERVAL 2 Day)\n)\nENGINE = MergeTree\nORDER BY n\nCACHE CS c1(INTERVAL 2 Minute, INTERVAL 3 Month), FIFO c3(INTERVAL 2 Hour, INTERVAL 4 Day)\nSETTINGS index_granularity = 8192
+ 
+CREATE TABLE default.t\n(\n    `n` Int8,\n    `s` String,\n    CACHE n FIFO c1(INTERVAL 1 Hour, INTERVAL 2 Day),\n    CACHE n CS c1(INTERVAL 2 Day, INTERVAL 4 Day),\n    CACHE n CS c2(INTERVAL 2 Day, INTERVAL 4 Day)\n)\nENGINE = MergeTree\nORDER BY n\nCACHE CS c1(INTERVAL 2 Minute, INTERVAL 3 Month), FIFO c3(INTERVAL 2 Hour, INTERVAL 4 Day)\nSETTINGS index_granularity = 8192
+ 
+CREATE TABLE default.t\n(\n    `n` Int8,\n    `s` String,\n    CACHE n FIFO c1(INTERVAL 1 Hour, INTERVAL 2 Day),\n    CACHE n CS c1(INTERVAL 2 Day, INTERVAL 4 Day)\n)\nENGINE = MergeTree\nORDER BY n\nCACHE CS c1(INTERVAL 2 Minute, INTERVAL 3 Month), FIFO c3(INTERVAL 2 Hour, INTERVAL 4 Day)\nSETTINGS index_granularity = 8192
+ 

@@ -294,6 +294,42 @@ std::optional<AlterCommand> AlterCommand::parse(const ASTAlterCommand * command_
         command.if_exists = command_ast->if_exists;
         return command;
     }
+    else if (command_ast->type == ASTAlterCommand::ADD_COLUMN_CACHE)
+    {
+        AlterCommand command;
+        command.ast = command_ast->clone();
+        command.type = AlterCommand::ADD_COLUMN_CACHE;
+        command.column_name = command_ast->cache_decl->as<ASTCacheDeclaration &>().column_name;
+        command.cache_decl = command_ast->cache_decl->clone();
+        command.cluster = command_ast->cluster;
+        return command;
+    }
+    else if (command_ast->type == ASTAlterCommand::DROP_COLUMN_CACHE)
+    {
+        AlterCommand command;
+        command.ast = command_ast->clone();
+        command.type = AlterCommand::DROP_COLUMN_CACHE;
+        command.column_name = command_ast->column->as<ASTIdentifier &>().name();
+        command.cluster = command_ast->cluster;
+        return command;
+    }
+    else if (command_ast->type == ASTAlterCommand::ADD_TABLE_CACHE)
+    {
+        AlterCommand command;
+        command.ast = command_ast->clone();
+        command.type = AlterCommand::ADD_TABLE_CACHE;
+        command.cache_decl = command_ast->cache_decl->clone();
+        command.cluster = command_ast->cluster;
+        return command;
+    }
+    else if (command_ast->type == ASTAlterCommand::DROP_TABLE_CACHE)
+    {
+        AlterCommand command;
+        command.ast = command_ast->clone();
+        command.type = AlterCommand::DROP_TABLE_CACHE;
+        command.cluster = command_ast->cluster;
+        return command;
+    }
     else
         return {};
 }
@@ -561,6 +597,45 @@ void AlterCommand::apply(StorageInMemoryMetadata & metadata, const Context & con
         for (auto & index : metadata.secondary_indices)
             rename_visitor.visit(index.definition_ast);
     }
+    else if (type == ADD_COLUMN_CACHE)
+    {
+        auto new_col_cache = metadata.columns_cache;
+        auto it = new_col_cache.findWithColAndCluster(column_name, cluster);
+        if (it != new_col_cache.end())
+            new_col_cache.erase(it);
+        auto new_cache = CacheDescription<false>::getCacheFromAST(cache_decl);
+        new_cache.column_name = column_name;
+        new_col_cache.push_back(new_cache);
+        metadata.setColumnsCache(new_col_cache);
+    }
+    else if (type == DROP_COLUMN_CACHE)
+    {
+        auto new_col_cache = metadata.columns_cache;
+        auto it = new_col_cache.findWithColAndCluster(column_name, cluster);
+        if (it == new_col_cache.end())
+            throw Exception("Wrong parameter in ALTER query, cache policy doesn't exists", ErrorCodes::BAD_ARGUMENTS);
+        new_col_cache.erase(it);
+        metadata.setColumnsCache(new_col_cache);
+    }
+    else if (type == ADD_TABLE_CACHE)
+    {
+        auto new_table_cache = metadata.table_cache;
+        auto it = new_table_cache.findWithCluster(cluster);
+        if (it != new_table_cache.end())
+            new_table_cache.erase(it);
+        auto new_cache = CacheDescription<true>::getCacheFromAST(cache_decl);
+        new_table_cache.push_back(new_cache);
+        metadata.setTableCache(new_table_cache);
+    }
+    else if (type == DROP_TABLE_CACHE)
+    {
+        auto new_table_cache = metadata.table_cache;
+        auto it = new_table_cache.findWithCluster(cluster);
+        if (it == new_table_cache.end())
+            throw Exception("Wrong parameter in ALTER query, cache policy doesn't exists", ErrorCodes::BAD_ARGUMENTS);
+        new_table_cache.erase(it);
+        metadata.setTableCache(new_table_cache);
+    }
     else
         throw Exception("Wrong parameter type in ALTER query", ErrorCodes::LOGICAL_ERROR);
 }
@@ -784,6 +859,14 @@ String alterTypeToString(const AlterCommand::Type type)
         return "RENAME COLUMN";
     case AlterCommand::Type::REMOVE_TTL:
         return "REMOVE TTL";
+    case AlterCommand::Type::ADD_COLUMN_CACHE:
+        return "MODIFY COLUMN CACHE";
+    case AlterCommand::Type::DROP_COLUMN_CACHE:
+        return "DROP COLUMN CACHE";
+    case AlterCommand::ADD_TABLE_CACHE:
+        return "MODIFY TABLE CACHE";
+    case AlterCommand::Type::DROP_TABLE_CACHE:
+        return "DROP TABLE CACHE";
     }
     __builtin_unreachable();
 }

@@ -1,13 +1,14 @@
 #pragma once
 
-#include <Common/NamePrompter.h>
+#include <unordered_map>
+#include <Access/AccessType.h>
 #include <Parsers/IAST_fwd.h>
+#include <Storages/CachesDescription.h>
 #include <Storages/ColumnsDescription.h>
 #include <Storages/ConstraintsDescription.h>
 #include <Storages/IStorage_fwd.h>
 #include <Storages/registerStorages.h>
-#include <Access/AccessType.h>
-#include <unordered_map>
+#include <Common/NamePrompter.h>
 
 
 namespace DB
@@ -43,6 +44,8 @@ public:
         Context & context;
         const ColumnsDescription & columns;
         const ConstraintsDescription & constraints;
+        const ColumnsCacheDescription & columns_cache;
+        const TableCacheDescription & table_cache;
         bool attach;
         bool has_force_restore_data_flag;
     };
@@ -73,13 +76,15 @@ public:
 
     using Storages = std::unordered_map<std::string, Creator>;
 
-    StoragePtr get(
-        const ASTCreateQuery & query,
+    StoragePtr
+    get(const ASTCreateQuery & query,
         const String & relative_data_path,
         Context & local_context,
         Context & context,
         const ColumnsDescription & columns,
         const ConstraintsDescription & constraints,
+        const ColumnsCacheDescription & columns_cache,
+        const TableCacheDescription & table_cache,
         bool has_force_restore_data_flag) const;
 
     /// Register a table engine by its name.

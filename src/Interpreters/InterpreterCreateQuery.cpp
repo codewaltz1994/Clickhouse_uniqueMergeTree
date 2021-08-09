@@ -360,6 +360,26 @@ ASTPtr InterpreterCreateQuery::formatConstraints(const ConstraintsDescription & 
     return res;
 }
 
+ASTPtr InterpreterCreateQuery::formatColumnCaches(const ColumnsCacheDescription & column_caches)
+{
+    auto res = std::make_shared<ASTExpressionList>();
+
+    for (const auto & cache : column_caches)
+        res->children.push_back(cache.definition_ast->clone());
+
+    return res;
+}
+
+ASTPtr InterpreterCreateQuery::formatTableCaches(const TableCacheDescription & table_caches)
+{
+    auto res = std::make_shared<ASTExpressionList>();
+
+    for (const auto & cache : table_caches)
+        res->children.push_back(cache.definition_ast->clone());
+
+    return res;
+}
+
 ColumnsDescription InterpreterCreateQuery::getColumnsDescription(
     const ASTExpressionList & columns_ast, const Context & context, bool attach)
 {
@@ -497,15 +517,50 @@ ConstraintsDescription InterpreterCreateQuery::getConstraintsDescription(const A
     return res;
 }
 
+ColumnsCacheDescription InterpreterCreateQuery::getColumnsCacheDescription(const ASTCreateQuery & create)
+{
+    ColumnsCacheDescription res;
+    if (create.columns_list->caches)
+    {
+        for (const auto & cache : create.columns_list->caches->children)
+            res.push_back(CacheDescription<false>::getCacheFromAST(cache->clone()));
+    }
+    return res;
+}
+
+TableCacheDescription InterpreterCreateQuery::getTableCacheDescription(const ASTCreateQuery & create)
+{
+    if (create.storage)
+    {
+        const auto & ast_storage = create.storage->as<ASTStorage &>();
+        if (ast_storage.caches)
+        {
+            TableCacheDescription res;
+            for (const auto & cache : ast_storage.caches->children)
+                res.push_back(CacheDescription<true>::getCacheFromAST(cache->clone()));
+            return res;
+        }
+    }
+    return TableCacheDescription{};
+}
 
 InterpreterCreateQuery::TableProperties InterpreterCreateQuery::setProperties(ASTCreateQuery & create) const
 {
     TableProperties properties;
     TableLockHolder as_storage_lock;
 
+    if (create.storage)
+    {
+        const auto & ast_storage = create.storage->as<ASTStorage &>();
+        if (ast_storage.caches)
+        {
+            properties.table_cache = getTableCacheDescription(create);
+        }
+    }
+
     if (create.columns_list)
     {
-        if (create.as_table_function && (create.columns_list->indices || create.columns_list->constraints))
+        if (create.as_table_function && (create.columns_list->indices || create.columns_list->constraints || create.columns_list->caches))
             throw Exception("Indexes and constraints are not supported for table functions", ErrorCodes::INCORRECT_QUERY);
 
         if (create.columns_list->columns)
@@ -517,6 +572,12 @@ InterpreterCreateQuery::TableProperties InterpreterCreateQuery::setProperties(AS
             for (const auto & index : create.columns_list->indices->children)
                 properties.indices.push_back(
                     IndexDescription::getIndexFromAST(index->clone(), properties.columns, context));
+
+        if (create.columns_list->caches)
+        {
+            for (const auto & cache : create.columns_list->caches->children)
+                properties.columns_cache.push_back(CacheDescription<false>::getCacheFromAST(cache->clone()));
+        }
 
         properties.constraints = getConstraintsDescription(create.columns_list->constraints);
     }
@@ -1002,12 +1063,15 @@ bool InterpreterCreateQuery::doCreateTable(ASTCreateQuery & create,
     }
     else
     {
-        res = StorageFactory::instance().get(create,
+        res = StorageFactory::instance().get(
+            create,
             data_path,
             context,
             context.getGlobalContext(),
             properties.columns,
             properties.constraints,
+            properties.columns_cache,
+            properties.table_cache,
             false);
     }
 

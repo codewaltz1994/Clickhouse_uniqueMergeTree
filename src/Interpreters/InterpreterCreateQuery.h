@@ -1,12 +1,13 @@
 #pragma once
 
+#include <Access/AccessRightsElement.h>
 #include <Interpreters/IInterpreter.h>
+#include <Storages/CachesDescription.h>
 #include <Storages/ColumnsDescription.h>
+#include <Storages/ConstraintsDescription.h>
 #include <Storages/IStorage_fwd.h>
 #include <Storages/StorageInMemoryMetadata.h>
-#include <Storages/ConstraintsDescription.h>
 #include <Common/ThreadPool.h>
-#include <Access/AccessRightsElement.h>
 
 
 namespace DB
@@ -36,6 +37,8 @@ public:
 
     static ASTPtr formatIndices(const IndicesDescription & indices);
     static ASTPtr formatConstraints(const ConstraintsDescription & constraints);
+    static ASTPtr formatColumnCaches(const ColumnsCacheDescription & column_caches);
+    static ASTPtr formatTableCaches(const TableCacheDescription & table_caches);
 
     void setForceRestoreData(bool has_force_restore_data_flag_)
     {
@@ -56,6 +59,8 @@ public:
     ///  for case when columns in CREATE query is specified explicitly.
     static ColumnsDescription getColumnsDescription(const ASTExpressionList & columns, const Context & context, bool attach);
     static ConstraintsDescription getConstraintsDescription(const ASTExpressionList * constraints);
+    static ColumnsCacheDescription getColumnsCacheDescription(const ASTCreateQuery & create);
+    static TableCacheDescription getTableCacheDescription(const ASTCreateQuery & create);
 
     static void prepareOnClusterQuery(ASTCreateQuery & create, const Context & context, const String & cluster_name);
 
@@ -67,6 +72,8 @@ private:
         ColumnsDescription columns;
         IndicesDescription indices;
         ConstraintsDescription constraints;
+        TableCacheDescription table_cache;
+        ColumnsCacheDescription columns_cache;
     };
 
     BlockIO createDatabase(ASTCreateQuery & create);

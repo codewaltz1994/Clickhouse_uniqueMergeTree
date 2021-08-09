@@ -1,16 +1,15 @@
 #pragma once
 
-#include <Parsers/ASTQueryWithTableAndOutput.h>
-#include <Parsers/ASTQueryWithOnCluster.h>
+#include <Interpreters/StorageID.h>
 #include <Parsers/ASTDictionary.h>
 #include <Parsers/ASTDictionaryAttributeDeclaration.h>
 #include <Parsers/ASTIdentifier.h>
+#include <Parsers/ASTQueryWithOnCluster.h>
+#include <Parsers/ASTQueryWithTableAndOutput.h>
 #include <Parsers/ASTSelectWithUnionQuery.h>
-#include <Interpreters/StorageID.h>
 
 namespace DB
 {
-
 class ASTFunction;
 class ASTSetQuery;
 
@@ -23,6 +22,7 @@ public:
     IAST * order_by = nullptr;
     IAST * sample_by = nullptr;
     IAST * ttl_table = nullptr;
+    ASTExpressionList * caches = nullptr;
     ASTSetQuery * settings = nullptr;
 
     String getID(char) const override { return "Storage definition"; }
@@ -41,7 +41,8 @@ public:
     ASTExpressionList * columns = nullptr;
     ASTExpressionList * indices = nullptr;
     ASTExpressionList * constraints = nullptr;
-    IAST              * primary_key = nullptr;
+    ASTExpressionList * caches = nullptr;
+    IAST * primary_key = nullptr;
 
     String getID(char) const override { return "Columns definition"; }
 
@@ -55,7 +56,7 @@ public:
 class ASTCreateQuery : public ASTQueryWithTableAndOutput, public ASTQueryWithOnCluster
 {
 public:
-    bool attach{false};    /// Query ATTACH TABLE, not CREATE TABLE.
+    bool attach{false}; /// Query ATTACH TABLE, not CREATE TABLE.
     bool if_not_exists{false};
     bool is_ordinary_view{false};
     bool is_materialized_view{false};
@@ -65,8 +66,8 @@ public:
     ASTColumns * columns_list = nullptr;
     ASTExpressionList * tables = nullptr;
 
-    StorageID to_table_id = StorageID::createEmpty();   /// For CREATE MATERIALIZED VIEW mv TO table.
-    UUID to_inner_uuid = UUIDHelpers::Nil;      /// For materialized view with inner table
+    StorageID to_table_id = StorageID::createEmpty(); /// For CREATE MATERIALIZED VIEW mv TO table.
+    UUID to_inner_uuid = UUIDHelpers::Nil; /// For materialized view with inner table
     ASTStorage * storage = nullptr;
     String as_database;
     String as_table;
@@ -77,8 +78,8 @@ public:
     ASTExpressionList * dictionary_attributes_list = nullptr; /// attributes of
     ASTDictionary * dictionary = nullptr; /// dictionary definition (layout, primary key, etc.)
 
-    std::optional<UInt64> live_view_timeout;    /// For CREATE LIVE VIEW ... WITH TIMEOUT ...
-    std::optional<UInt64> live_view_periodic_refresh;    /// For CREATE LIVE VIEW ... WITH [PERIODIC] REFRESH ...
+    std::optional<UInt64> live_view_timeout; /// For CREATE LIVE VIEW ... WITH TIMEOUT ...
+    std::optional<UInt64> live_view_periodic_refresh; /// For CREATE LIVE VIEW ... WITH [PERIODIC] REFRESH ...
 
     bool attach_short_syntax{false};
 

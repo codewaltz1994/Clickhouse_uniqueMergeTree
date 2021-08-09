@@ -1,24 +1,24 @@
-#include <Common/typeid_cast.h>
+#include <IO/ReadHelpers.h>
+#include <Parsers/ASTCacheDeclaration.h>
+#include <Parsers/ASTConstraintDeclaration.h>
+#include <Parsers/ASTCreateQuery.h>
+#include <Parsers/ASTExpressionList.h>
 #include <Parsers/ASTFunction.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTIndexDeclaration.h>
-#include <Parsers/ASTExpressionList.h>
-#include <Parsers/ASTCreateQuery.h>
-#include <Parsers/ASTSetQuery.h>
 #include <Parsers/ASTSelectWithUnionQuery.h>
+#include <Parsers/ASTSetQuery.h>
 #include <Parsers/ExpressionListParsers.h>
 #include <Parsers/ParserCreateQuery.h>
-#include <Parsers/ParserSelectWithUnionQuery.h>
-#include <Parsers/ParserSetQuery.h>
-#include <Parsers/ASTConstraintDeclaration.h>
 #include <Parsers/ParserDictionary.h>
 #include <Parsers/ParserDictionaryAttributeDeclaration.h>
-#include <IO/ReadHelpers.h>
+#include <Parsers/ParserSelectWithUnionQuery.h>
+#include <Parsers/ParserSetQuery.h>
+#include <Common/typeid_cast.h>
 
 
 namespace DB
 {
-
 namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
@@ -124,6 +124,119 @@ bool ParserIndexDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expected & expe
     return true;
 }
 
+bool ParserColumnCacheDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
+{
+    auto ast_cache = std::make_shared<ASTCacheDeclaration>();
+
+    ParserIdentifier col_name_p;
+
+    /// Parse column name
+    ASTPtr col_name;
+    if (!col_name_p.parse(pos, col_name, expected))
+        return false;
+
+    ast_cache->column_name = col_name->as<ASTIdentifier &>().name();
+    ast_cache->is_column_cache = true;
+
+    ParserKeyword s_fifo("FIFO");
+    ParserKeyword s_cs("CS");
+    ParserFunction func_p;
+
+    auto init_expected = expected;
+    /// Parse cache policy
+    if (s_fifo.ignore(pos, expected))
+    {
+        ast_cache->cache_policy = ASTCacheDeclaration::CachePolicy::FIFO;
+    }
+    else if (s_cs.ignore(pos, expected))
+    {
+        ast_cache->cache_policy = ASTCacheDeclaration::CachePolicy::CS;
+    }
+    else
+    {
+        return false;
+    }
+
+    /// Parse cluster_name(INTERVAL t1, INTERVAL t2);
+    ASTPtr cluster_func;
+    if (!func_p.parse(pos, cluster_func, expected))
+        return false;
+    auto func = cluster_func->as<ASTFunction &>();
+
+    ast_cache->cluster_name = func.name;
+
+    auto expr_list = func.arguments->as<ASTExpressionList &>();
+    if (expr_list.children.size() != 2)
+        return false;
+
+    auto arg1 = expr_list.children.at(0)->as<ASTFunction &>();
+    auto arg2 = expr_list.children.at(1)->as<ASTFunction &>();
+
+    if (!startsWith(arg1.name, "toInterval") || !startsWith(arg2.name, "toInterval"))
+        return false;
+
+    /// Parse interval kind and value
+    if (!IntervalKind::tryParseString(Poco::toLower(arg1.name.substr(10)), ast_cache->start.kind.kind)
+        || !IntervalKind::tryParseString(Poco::toLower(arg2.name.substr(10)), ast_cache->end.kind.kind))
+        return false;
+    ast_cache->start.value = arg1.arguments->as<ASTExpressionList &>().children.at(0)->as<ASTLiteral &>().value.get<UInt64>();
+    ast_cache->end.value = arg2.arguments->as<ASTExpressionList &>().children.at(0)->as<ASTLiteral &>().value.get<UInt64>();
+
+    node = ast_cache;
+    return true;
+}
+
+bool ParserTableCacheDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
+{
+    auto ast_cache = std::make_shared<ASTCacheDeclaration>();
+    ParserKeyword s_fifo("FIFO");
+    ParserKeyword s_cs("CS");
+    ParserFunction func_p;
+
+    /// Parse cache policy
+    if (s_fifo.ignore(pos, expected))
+    {
+        ast_cache->cache_policy = ASTCacheDeclaration::CachePolicy::FIFO;
+    }
+    else if (s_cs.ignore(pos, expected))
+    {
+        ast_cache->cache_policy = ASTCacheDeclaration::CachePolicy::CS;
+    }
+    else
+    {
+        return false;
+    }
+
+    /// Parse cluster_name(INTERVAL t1, INTERVAL t2);
+    ASTPtr cluster_func;
+    if (!func_p.parse(pos, cluster_func, expected))
+        return false;
+    auto func = cluster_func->as<ASTFunction &>();
+
+    ast_cache->cluster_name = func.name;
+
+    auto expr_list = func.arguments->as<ASTExpressionList &>();
+    if (expr_list.children.size() != 2)
+        return false;
+
+    auto arg1 = expr_list.children.at(0)->as<ASTFunction &>();
+    auto arg2 = expr_list.children.at(1)->as<ASTFunction &>();
+
+    if (!startsWith(arg1.name, "toInterval") || !startsWith(arg2.name, "toInterval"))
+        return false;
+
+    /// Parse interval kind and value
+    if (!IntervalKind::tryParseString(Poco::toLower(arg1.name.substr(10)), ast_cache->start.kind.kind)
+        || !IntervalKind::tryParseString(Poco::toLower(arg2.name.substr(10)), ast_cache->end.kind.kind))
+        return false;
+    ast_cache->start.value = arg1.arguments->as<ASTExpressionList &>().children.at(0)->as<ASTLiteral &>().value.get<UInt64>();
+    ast_cache->end.value = arg2.arguments->as<ASTExpressionList &>().children.at(0)->as<ASTLiteral &>().value.get<UInt64>();
+
+    node = ast_cache;
+
+    return true;
+}
+
 bool ParserConstraintDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 {
     ParserKeyword s_check("CHECK");
@@ -157,9 +270,11 @@ bool ParserTablePropertyDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expecte
     ParserKeyword s_index("INDEX");
     ParserKeyword s_constraint("CONSTRAINT");
     ParserKeyword s_primary_key("PRIMARY KEY");
+    ParserKeyword s_cache("CACHE");
 
     ParserIndexDeclaration index_p;
     ParserConstraintDeclaration constraint_p;
+    ParserColumnCacheDeclaration column_cache_p;
     ParserColumnDeclaration column_p{true, true};
     ParserExpression primary_key_p;
 
@@ -180,6 +295,11 @@ bool ParserTablePropertyDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expecte
         if (!primary_key_p.parse(pos, new_node, expected))
             return false;
     }
+    else if (s_cache.ignore(pos, expected))
+    {
+        if (!column_cache_p.parse(pos, new_node, expected))
+            return false;
+    }
     else
     {
         if (!column_p.parse(pos, new_node, expected))
@@ -190,30 +310,35 @@ bool ParserTablePropertyDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expecte
     return true;
 }
 
+bool ParserCacheDeclarationList::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
+{
+    return ParserList(std::make_unique<ParserColumnCacheDeclaration>(), std::make_unique<ParserToken>(TokenType::Comma), false)
+        .parse(pos, node, expected);
+}
+
 bool ParserIndexDeclarationList::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 {
     return ParserList(std::make_unique<ParserIndexDeclaration>(), std::make_unique<ParserToken>(TokenType::Comma), false)
-            .parse(pos, node, expected);
+        .parse(pos, node, expected);
 }
 
 bool ParserConstraintDeclarationList::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 {
     return ParserList(std::make_unique<ParserConstraintDeclaration>(), std::make_unique<ParserToken>(TokenType::Comma), false)
-            .parse(pos, node, expected);
+        .parse(pos, node, expected);
 }
 
 bool ParserTablePropertiesDeclarationList::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 {
     ASTPtr list;
-    if (!ParserList(
-            std::make_unique<ParserTablePropertyDeclaration>(),
-                    std::make_unique<ParserToken>(TokenType::Comma), false)
-            .parse(pos, list, expected))
+    if (!ParserList(std::make_unique<ParserTablePropertyDeclaration>(), std::make_unique<ParserToken>(TokenType::Comma), false)
+             .parse(pos, list, expected))
         return false;
 
     ASTPtr columns = std::make_shared<ASTExpressionList>();
     ASTPtr indices = std::make_shared<ASTExpressionList>();
     ASTPtr constraints = std::make_shared<ASTExpressionList>();
+    ASTPtr caches = std::make_shared<ASTExpressionList>();
     ASTPtr primary_key;
 
     for (const auto & elem : list->children)
@@ -224,6 +349,8 @@ bool ParserTablePropertiesDeclarationList::parseImpl(Pos & pos, ASTPtr & node, E
             indices->children.push_back(elem);
         else if (elem->as<ASTConstraintDeclaration>())
             constraints->children.push_back(elem);
+        else if (elem->as<ASTCacheDeclaration>())
+            caches->children.push_back(elem);
         else if (elem->as<ASTIdentifier>() || elem->as<ASTFunction>())
         {
             if (primary_key)
@@ -245,6 +372,8 @@ bool ParserTablePropertiesDeclarationList::parseImpl(Pos & pos, ASTPtr & node, E
         res->set(res->indices, indices);
     if (!constraints->children.empty())
         res->set(res->constraints, constraints);
+    if (!caches->children.empty())
+        res->set(res->caches, caches);
     if (primary_key)
         res->set(res->primary_key, primary_key);
 
@@ -263,6 +392,7 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     ParserKeyword s_order_by("ORDER BY");
     ParserKeyword s_sample_by("SAMPLE BY");
     ParserKeyword s_ttl("TTL");
+    ParserKeyword s_cache("CACHE");
     ParserKeyword s_settings("SETTINGS");
 
     ParserIdentifierWithOptionalParameters ident_with_optional_params_p;
@@ -276,6 +406,7 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     ASTPtr order_by;
     ASTPtr sample_by;
     ASTPtr ttl_table;
+    ASTPtr table_cache;
     ASTPtr settings;
 
     if (!s_engine.ignore(pos, expected))
@@ -328,6 +459,20 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
                 return false;
         }
 
+        if (!table_cache && s_cache.ignore(pos, expected))
+        {
+            ASTPtr list;
+            if (ParserList(std::make_unique<ParserTableCacheDeclaration>(), std::make_unique<ParserToken>(TokenType::Comma), false)
+                    .parse(pos, list, expected))
+            {
+                table_cache = std::make_shared<ASTExpressionList>();
+                for (const auto & elem : list->children)
+                    table_cache->children.push_back(elem);
+            }
+            else
+                return false;
+        }
+
         if (s_settings.ignore(pos, expected))
         {
             if (!settings_p.parse(pos, settings, expected))
@@ -344,6 +489,7 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     storage->set(storage->order_by, order_by);
     storage->set(storage->sample_by, sample_by);
     storage->set(storage->ttl_table, ttl_table);
+    storage->set(storage->caches, table_cache);
 
     storage->set(storage->settings, settings);
 
@@ -590,10 +736,10 @@ bool ParserCreateLiveViewQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & e
         return false;
 
     if (!s_view.ignore(pos, expected))
-       return false;
+        return false;
 
     if (s_if_not_exists.ignore(pos, expected))
-       if_not_exists = true;
+        if_not_exists = true;
 
     if (!table_name_p.parse(pos, table, expected))
         return false;
@@ -902,7 +1048,6 @@ bool ParserCreateViewQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     query->set(query->select, select);
 
     return true;
-
 }
 
 bool ParserCreateDictionaryQuery::parseImpl(IParser::Pos & pos, ASTPtr & node, Expected & expected)
@@ -992,11 +1137,8 @@ bool ParserCreateQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     ParserCreateDictionaryQuery dictionary_p;
     ParserCreateLiveViewQuery live_view_p;
 
-    return table_p.parse(pos, node, expected)
-        || database_p.parse(pos, node, expected)
-        || view_p.parse(pos, node, expected)
-        || dictionary_p.parse(pos, node, expected)
-        || live_view_p.parse(pos, node, expected);
+    return table_p.parse(pos, node, expected) || database_p.parse(pos, node, expected) || view_p.parse(pos, node, expected)
+        || dictionary_p.parse(pos, node, expected) || live_view_p.parse(pos, node, expected);
 }
 
 }

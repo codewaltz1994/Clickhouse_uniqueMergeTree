@@ -626,6 +626,8 @@ static StoragePtr create(const StorageFactory::Arguments & args)
 
     StorageInMemoryMetadata metadata;
     metadata.columns = args.columns;
+    metadata.setColumnsCache(args.columns_cache);
+    metadata.setTableCache(args.table_cache);
 
     std::unique_ptr<MergeTreeSettings> storage_settings;
     if (replicated)

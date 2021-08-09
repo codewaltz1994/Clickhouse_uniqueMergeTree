@@ -60,6 +60,11 @@ public:
         DELETE,
         UPDATE,
 
+        ADD_COLUMN_CACHE,
+        DROP_COLUMN_CACHE,
+        ADD_TABLE_CACHE,
+        DROP_TABLE_CACHE,
+
         NO_TYPE,
 
         LIVE_VIEW_REFRESH,
@@ -75,7 +80,7 @@ public:
 
     /** The ADD COLUMN and MODIFY COLUMN query here optionally stores the name of the column following AFTER
      * The DROP query stores the column name for deletion here
-     * Also used for RENAME COLUMN.
+     * Also used for RENAME COLUMN. MODIFY COLUMN with CACHE
      */
     ASTPtr column;
 
@@ -97,6 +102,9 @@ public:
      *  The CLEAR INDEX query stores the name of the index to clear.
      */
     ASTPtr index;
+
+    /// The Add cache query stores the CacheDeclaration here.
+    ASTPtr cache_decl;
 
     /** The ADD CONSTRAINT query stores the ConstraintDeclaration there.
     */
@@ -175,6 +183,9 @@ public:
 
     /// Which property user want to remove
     String remove_property;
+
+    /// Cluster name for drop cache command
+    String cluster;
 
     String getID(char delim) const override { return "AlterCommand" + (delim + std::to_string(static_cast<int>(type))); }
 

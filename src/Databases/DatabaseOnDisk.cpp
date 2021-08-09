@@ -71,9 +71,10 @@ std::pair<String, StoragePtr> createTableFromAST(
 
     ColumnsDescription columns = InterpreterCreateQuery::getColumnsDescription(*ast_create_query.columns_list->columns, context, true);
     ConstraintsDescription constraints = InterpreterCreateQuery::getConstraintsDescription(ast_create_query.columns_list->constraints);
+    ColumnsCacheDescription columns_cache = InterpreterCreateQuery::getColumnsCacheDescription(ast_create_query);
+    TableCacheDescription table_cache = InterpreterCreateQuery::getTableCacheDescription(ast_create_query);
 
-    return
-    {
+    return {
         ast_create_query.table,
         StorageFactory::instance().get(
             ast_create_query,
@@ -82,8 +83,9 @@ std::pair<String, StoragePtr> createTableFromAST(
             context.getGlobalContext(),
             columns,
             constraints,
-            has_force_restore_data_flag)
-    };
+            columns_cache,
+            table_cache,
+            has_force_restore_data_flag)};
 }
 
 
@@ -142,10 +144,19 @@ void applyMetadataChangesToCreateQuery(const ASTPtr & query, const StorageInMemo
     ASTPtr new_columns = InterpreterCreateQuery::formatColumns(metadata.columns);
     ASTPtr new_indices = InterpreterCreateQuery::formatIndices(metadata.secondary_indices);
     ASTPtr new_constraints = InterpreterCreateQuery::formatConstraints(metadata.constraints);
+    ASTPtr new_columns_cache = InterpreterCreateQuery::formatColumnCaches(metadata.columns_cache);
+    ASTPtr new_table_cache = InterpreterCreateQuery::formatTableCaches(metadata.table_cache);
 
     ast_create_query.columns_list->replace(ast_create_query.columns_list->columns, new_columns);
     ast_create_query.columns_list->setOrReplace(ast_create_query.columns_list->indices, new_indices);
     ast_create_query.columns_list->setOrReplace(ast_create_query.columns_list->constraints, new_constraints);
+    ast_create_query.columns_list->setOrReplace(ast_create_query.columns_list->caches, new_columns_cache);
+
+    if (ast_create_query.storage)
+    {
+        auto & ast_storage = ast_create_query.storage->as<ASTStorage &>();
+        ast_storage.set(ast_storage.caches, new_table_cache);
+    }
 
     if (metadata.select.select_query)
     {

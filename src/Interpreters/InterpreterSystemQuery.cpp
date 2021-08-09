@@ -433,12 +433,15 @@ StoragePtr InterpreterSystemQuery::tryRestartReplica(const StorageID & replica, 
     auto constraints = InterpreterCreateQuery::getConstraintsDescription(create.columns_list->constraints);
     auto data_path = database->getTableDataPath(create);
 
-    table = StorageFactory::instance().get(create,
+    table = StorageFactory::instance().get(
+        create,
         data_path,
         system_context,
         system_context.getGlobalContext(),
         columns,
         constraints,
+        ColumnsCacheDescription{},
+        TableCacheDescription{},
         false);
 
     database->attachTable(replica.table_name, table, data_path);

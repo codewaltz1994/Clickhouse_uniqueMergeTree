@@ -46,6 +46,8 @@ StoragePtr StorageFactory::get(
     Context & context,
     const ColumnsDescription & columns,
     const ConstraintsDescription & constraints,
+    const ColumnsCacheDescription & columns_cache,
+    const TableCacheDescription & table_cache,
     bool has_force_restore_data_flag) const
 {
     String name;
@@ -164,8 +166,7 @@ StoragePtr StorageFactory::get(
     }
 
     ASTs empty_engine_args;
-    Arguments arguments
-    {
+    Arguments arguments{
         .engine_name = name,
         .engine_args = has_engine_args ? storage_def->engine->arguments->children : empty_engine_args,
         .storage_def = storage_def,
@@ -176,9 +177,10 @@ StoragePtr StorageFactory::get(
         .context = context,
         .columns = columns,
         .constraints = constraints,
+        .columns_cache = columns_cache,
+        .table_cache = table_cache,
         .attach = query.attach,
-        .has_force_restore_data_flag = has_force_restore_data_flag
-    };
+        .has_force_restore_data_flag = has_force_restore_data_flag};
     assert(&arguments.context == &arguments.context.getGlobalContext());
 
     auto res = storages.at(name).creator_fn(arguments);

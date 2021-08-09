@@ -1,17 +1,18 @@
-#include <Common/typeid_cast.h>
-#include <Parsers/ParserAlterQuery.h>
+#include <Parsers/ASTAlterQuery.h>
+#include <Parsers/ASTCacheDeclaration.h>
+#include <Parsers/ASTIdentifier.h>
+#include <Parsers/ASTIndexDeclaration.h>
+#include <Parsers/ASTLiteral.h>
 #include <Parsers/CommonParsers.h>
 #include <Parsers/ExpressionElementParsers.h>
 #include <Parsers/ExpressionListParsers.h>
+#include <Parsers/ParserAlterQuery.h>
 #include <Parsers/ParserCreateQuery.h>
 #include <Parsers/ParserPartition.h>
 #include <Parsers/ParserSelectWithUnionQuery.h>
 #include <Parsers/ParserSetQuery.h>
-#include <Parsers/ASTIdentifier.h>
-#include <Parsers/ASTIndexDeclaration.h>
-#include <Parsers/ASTAlterQuery.h>
-#include <Parsers/ASTLiteral.h>
 #include <Parsers/parseDatabaseAndTableName.h>
+#include <Common/typeid_cast.h>
 
 
 namespace DB
@@ -26,6 +27,7 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
     ParserKeyword s_drop_column("DROP COLUMN");
     ParserKeyword s_clear_column("CLEAR COLUMN");
     ParserKeyword s_modify_column("MODIFY COLUMN");
+    ParserKeyword s_modify_column_cache("MODIFY COLUMN CACHE");
     ParserKeyword s_rename_column("RENAME COLUMN");
     ParserKeyword s_comment_column("COMMENT COLUMN");
     ParserKeyword s_modify_order_by("MODIFY ORDER BY");
@@ -40,10 +42,13 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
     ParserKeyword s_clear_index("CLEAR INDEX");
     ParserKeyword s_materialize_index("MATERIALIZE INDEX");
 
+    ParserKeyword s_cache("CACHE");
+    ParserKeyword s_add_cache("ADD CACHE");
+    ParserKeyword s_drop_cache("DROP CACHE");
+
     ParserKeyword s_add_constraint("ADD CONSTRAINT");
     ParserKeyword s_drop_constraint("DROP CONSTRAINT");
 
-    ParserKeyword s_add("ADD");
     ParserKeyword s_drop("DROP");
     ParserKeyword s_suspend("SUSPEND");
     ParserKeyword s_resume("RESUME");
@@ -95,7 +100,9 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
     ParserKeyword s_remove_ttl("REMOVE TTL");
 
     ParserCompoundIdentifier parser_name;
-    ParserStringLiteral parser_string_literal;
+    ParserLiteral parser_string_literal;
+    ParserIdentifier parser_column_name;
+    ParserIdentifier parser_cluster;
     ParserIdentifier parser_remove_property;
     ParserCompoundColumnDeclaration parser_col_decl;
     ParserIndexDeclaration parser_idx_decl;
@@ -110,6 +117,8 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
     ParserNameList values_p;
     ParserSelectWithUnionQuery select_p;
     ParserTTLExpressionList parser_ttl_list;
+    ParserTableCacheDeclaration parser_table_cache_decl;
+    ParserColumnCacheDeclaration parser_column_cache_decl;
 
     if (is_live_view)
     {
@@ -486,6 +495,28 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
                 return false;
             }
         }
+        else if (s_modify_column_cache.ignore(pos, expected))
+        {
+            /// DROP CACHE
+            if (s_drop.ignore(pos, expected))
+            {
+                ASTPtr cluster;
+
+                if (!parser_column_name.parse(pos, command->column, expected))
+                    return false;
+                if (!parser_cluster.parse(pos, cluster, expected))
+                    return false;
+                command->cluster = cluster->as<ASTIdentifier &>().name();
+                command->type = ASTAlterCommand::DROP_COLUMN_CACHE;
+            }
+            /// MODIFY CACHE
+            else
+            {
+                if (!parser_column_cache_decl.parse(pos, command->cache_decl, expected))
+                    return false;
+                command->type = ASTAlterCommand::ADD_COLUMN_CACHE;
+            }
+        }
         else if (s_modify_column.ignore(pos, expected))
         {
             if (s_if_exists.ignore(pos, expected))
@@ -510,6 +541,7 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
                     command->remove_property = "TTL";
                 else
                     return false;
+                command->type = ASTAlterCommand::MODIFY_COLUMN;
             }
             else
             {
@@ -520,8 +552,8 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
                     if (!parser_name.parse(pos, command->column, expected))
                         return false;
                 }
+                command->type = ASTAlterCommand::MODIFY_COLUMN;
             }
-            command->type = ASTAlterCommand::MODIFY_COLUMN;
         }
         else if (s_modify_order_by.ignore(pos, expected))
         {
@@ -617,6 +649,20 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
                 return false;
             command->type = ASTAlterCommand::MODIFY_QUERY;
         }
+        else if (s_add_cache.ignore(pos, expected))
+        {
+            if (!parser_table_cache_decl.parse(pos, command->cache_decl, expected))
+                return false;
+            command->type = ASTAlterCommand::ADD_TABLE_CACHE;
+        }
+        else if (s_drop_cache.ignore(pos, expected))
+        {
+            ASTPtr cluster;
+            if (!parser_cluster.parse(pos, cluster, expected))
+                return false;
+            command->cluster = cluster->as<ASTIdentifier &>().name();
+            command->type = ASTAlterCommand::DROP_TABLE_CACHE;
+        }
         else
             return false;
     }
@@ -655,6 +701,8 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
         command->children.push_back(command->select);
     if (command->rename_to)
         command->children.push_back(command->rename_to);
+    if (command->cache_decl)
+        command->children.push_back(command->cache_decl);
 
     return true;
 }

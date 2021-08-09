@@ -322,6 +322,22 @@ AccessRightsElements InterpreterAlterQuery::getRequiredAccessForCommand(const AS
             required_access.emplace_back(AccessType::ALTER_RENAME_COLUMN, database, table, column_name());
             break;
         }
+        case ASTAlterCommand::ADD_COLUMN_CACHE: {
+            required_access.emplace_back(AccessType::ALTER_CACHE, database, table);
+            break;
+        }
+        case ASTAlterCommand::DROP_COLUMN_CACHE: {
+            required_access.emplace_back(AccessType::ALTER_CACHE, database, table);
+            break;
+        }
+        case ASTAlterCommand::ADD_TABLE_CACHE: {
+            required_access.emplace_back(AccessType::ALTER_CACHE, database, table);
+            break;
+        }
+        case ASTAlterCommand::DROP_TABLE_CACHE: {
+            required_access.emplace_back(AccessType::ALTER_CACHE, database, table);
+            break;
+        }
         case ASTAlterCommand::NO_TYPE: break;
     }
 

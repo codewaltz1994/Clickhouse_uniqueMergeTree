@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Parsers/IAST_fwd.h>
+#include <Storages/CachesDescription.h>
 #include <Storages/ColumnDependency.h>
 #include <Storages/ColumnsDescription.h>
 #include <Storages/ConstraintsDescription.h>
@@ -23,6 +24,10 @@ struct StorageInMemoryMetadata
     ColumnsDescription columns;
     /// Table indices. Currently supported for MergeTree only.
     IndicesDescription secondary_indices;
+    /// Columns cache policy. Support for MergeTree only
+    ColumnsCacheDescription columns_cache;
+    /// Table cache policy. Support for MergeTree only
+    TableCacheDescription table_cache;
     /// Table constraints. Currently supported for MergeTree only.
     ConstraintsDescription constraints;
     /// PARTITION BY expression. Currently supported for MergeTree only.
@@ -60,6 +65,12 @@ struct StorageInMemoryMetadata
 
     /// Sets constraints
     void setConstraints(ConstraintsDescription constraints_);
+
+    /// Sets columns cache
+    void setColumnsCache(ColumnsCacheDescription columns_cache_);
+
+    /// Sets table cache
+    void setTableCache(TableCacheDescription table_cache_);
 
     /// Set partition key for storage (methods below, are just wrappers for this struct).
     void setPartitionKey(const KeyDescription & partition_key_);

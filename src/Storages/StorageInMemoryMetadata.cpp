@@ -26,6 +26,8 @@ namespace ErrorCodes
 StorageInMemoryMetadata::StorageInMemoryMetadata(const StorageInMemoryMetadata & other)
     : columns(other.columns)
     , secondary_indices(other.secondary_indices)
+    , columns_cache(other.columns_cache)
+    , table_cache(other.table_cache)
     , constraints(other.constraints)
     , partition_key(other.partition_key)
     , primary_key(other.primary_key)
@@ -45,6 +47,8 @@ StorageInMemoryMetadata & StorageInMemoryMetadata::operator=(const StorageInMemo
 
     columns = other.columns;
     secondary_indices = other.secondary_indices;
+    columns_cache = other.columns_cache;
+    table_cache = other.table_cache;
     constraints = other.constraints;
     partition_key = other.partition_key;
     primary_key = other.primary_key;
@@ -76,6 +80,16 @@ void StorageInMemoryMetadata::setSecondaryIndices(IndicesDescription secondary_i
 void StorageInMemoryMetadata::setConstraints(ConstraintsDescription constraints_)
 {
     constraints = std::move(constraints_);
+}
+
+void StorageInMemoryMetadata::setColumnsCache(ColumnsCacheDescription columns_cache_)
+{
+    columns_cache = std::move(columns_cache_);
+}
+
+void StorageInMemoryMetadata::setTableCache(TableCacheDescription table_cache_)
+{
+    table_cache = std::move(table_cache_);
 }
 
 void StorageInMemoryMetadata::setTableTTLs(const TTLTableDescription & table_ttl_)

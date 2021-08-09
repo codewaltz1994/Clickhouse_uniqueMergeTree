@@ -38,6 +38,10 @@ struct AlterCommand
         MODIFY_QUERY,
         RENAME_COLUMN,
         REMOVE_TTL,
+        ADD_COLUMN_CACHE,
+        DROP_COLUMN_CACHE,
+        ADD_TABLE_CACHE,
+        DROP_TABLE_CACHE,
     };
 
     /// Which property user wants to remove from column
@@ -120,6 +124,8 @@ struct AlterCommand
     /// For MODIFY_QUERY
     ASTPtr select = nullptr;
 
+    ASTPtr cache_decl = nullptr;
+    String cluster;
     /// Target column name
     String rename_to;
 

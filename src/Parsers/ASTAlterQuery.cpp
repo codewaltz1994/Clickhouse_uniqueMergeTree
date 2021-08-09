@@ -361,6 +361,30 @@ void ASTAlterCommand::formatImpl(
         settings.ostr << (settings.hilite ? hilite_keyword : "") << " TO ";
         rename_to->formatImpl(settings, state, frame);
     }
+    else if (type == ASTAlterCommand::ADD_TABLE_CACHE)
+    {
+        settings.ostr << (settings.hilite ? hilite_keyword : "") << indent_str << "ADD CACHE " << (settings.hilite ? hilite_none : "");
+        cache_decl->formatImpl(settings, state, frame);
+    }
+    else if (type == ASTAlterCommand::DROP_TABLE_CACHE)
+    {
+        settings.ostr << (settings.hilite ? hilite_keyword : "") << indent_str << "DROP CACHE " << (settings.hilite ? hilite_none : "");
+        settings.ostr << " " << cluster;
+    }
+    else if (type == ASTAlterCommand::ADD_COLUMN_CACHE)
+    {
+        settings.ostr << (settings.hilite ? hilite_keyword : "") << indent_str << "MODIFY COLUMN CACHE "
+                      << (settings.hilite ? hilite_none : "");
+        cache_decl->formatImpl(settings, state, frame);
+    }
+    else if (type == ASTAlterCommand::DROP_COLUMN_CACHE)
+    {
+        settings.ostr << (settings.hilite ? hilite_keyword : "") << indent_str << "MODIFY COLUMN CACHE "
+                      << (settings.hilite ? hilite_none : "");
+        settings.ostr << (settings.hilite ? hilite_keyword : "") << indent_str << "DROP " << (settings.hilite ? hilite_none : "");
+        column->formatImpl(settings, state, frame);
+        settings.ostr << " " << cluster;
+    }
     else
         throw Exception("Unexpected type of ALTER", ErrorCodes::UNEXPECTED_AST_STRUCTURE);
 }
