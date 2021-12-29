@@ -384,6 +384,7 @@ using FunctionOverloadResolverPtr = std::shared_ptr<IFunctionOverloadResolver>;
 class IFunction
 {
 public:
+	bool is_gpu_function = false;
 
     virtual ~IFunction() = default;
 

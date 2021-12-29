@@ -1,24 +1,30 @@
-#include <Interpreters/Set.h>
-#include <Common/ProfileEvents.h>
-#include <Interpreters/ArrayJoinAction.h>
-#include <Interpreters/ExpressionActions.h>
-#include <Interpreters/TableJoin.h>
-#include <Interpreters/Context.h>
+#include <optional>
+#include <queue>
+#include <stack>
 #include <Columns/ColumnArray.h>
+#include <Columns/ColumnConst.h>
 #include <Columns/ColumnFunction.h>
-#include <Common/typeid_cast.h>
+#include <Columns/ColumnSet.h>
+#include <Columns/ColumnTuple.h>
+#include <Core/SettingsEnums.h>
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <Functions/IFunction.h>
-#include <IO/WriteBufferFromString.h>
 #include <IO/Operators.h>
-#include <optional>
-#include <Columns/ColumnSet.h>
-#include <queue>
-#include <stack>
+#include <IO/WriteBufferFromString.h>
+#include <Interpreters/ArrayJoinAction.h>
+#include <Interpreters/Context.h>
+#include <Interpreters/ExpressionActions.h>
+#include <Interpreters/Set.h>
+#include <Interpreters/TableJoin.h>
 #include <Common/JSONBuilder.h>
-#include <Core/SettingsEnums.h>
+#include <Common/ProfileEvents.h>
+#include <Common/typeid_cast.h>
 
+#include <rpc/client.h>
+
+#include <sys/ipc.h>
+#include <sys/shm.h>
 
 #if defined(MEMORY_SANITIZER)
     #include <sanitizer/msan_interface.h>
@@ -567,38 +573,245 @@ static void executeAction(const ExpressionActions::Action & action, ExecutionCon
     {
         case ActionsDAG::ActionType::FUNCTION:
         {
-            auto & res_column = columns[action.result_position];
-            if (res_column.type || res_column.column)
-                throw Exception("Result column is not empty", ErrorCodes::LOGICAL_ERROR);
-
-            res_column.type = action.node->result_type;
-            res_column.name = action.node->result_name;
-
-            if (action.node->column)
+            if (action.node->is_gpu_function)
             {
-                /// Do not execute function if it's result is already known.
-                res_column.column = action.node->column->cloneResized(num_rows);
-                break;
-            }
+                rpc::client client("localhost", 8090);
+                const auto func_name = action.node->function->getName();
 
-            ColumnsWithTypeAndName arguments(action.arguments.size());
-            for (size_t i = 0; i < arguments.size(); ++i)
-            {
-                if (!action.arguments[i].needed_later)
-                    arguments[i] = std::move(columns[action.arguments[i].pos]);
-                else
-                    arguments[i] = columns[action.arguments[i].pos];
-            }
+                /// rpc call according to function name
+                if (func_name == "fft")
+                {
+                    assert(action.arguments.size() == 2);
+                    /// get data
+                    const auto * col_0 = checkAndGetColumn<ColumnVector<Float32>>(columns[action.arguments[0].pos].column.get());
+                    const auto & data_0 = col_0->getData();
+                    const auto * col_1 = checkAndGetColumn<ColumnVector<Float32>>(columns[action.arguments[1].pos].column.get());
+                    const auto & data_1 = col_1->getData();
+                    size_t data_size = data_0.size() * sizeof(Float32);
+                    /// create shared memory and copy data
+                    std::string arg0 = "fft_args0";
+                    std::string arg1 = "fft_args1";
+                    int magic = 7;
+                    key_t key_0 = ftok(arg0.c_str(), magic);
+                    int shmid_0 = shmget(key_0, data_size, 0666 | IPC_CREAT);
+                    key_t key_1 = ftok(arg1.c_str(), magic);
+                    int shmid_1 = shmget(key_1, data_size, 0666 | IPC_CREAT);
+                    /// attach to shared memory
+                    char * str_0 = reinterpret_cast<char *>(shmat(shmid_0, reinterpret_cast<void *>(0), 0));
+                    /// copy data from arguments column to shared memory
+                    memcpy(str_0, data_0.data(), data_size);
 
-            if (action.is_lazy_executed)
-                res_column.column = ColumnFunction::create(num_rows, action.node->function_base, std::move(arguments), true, action.node->is_function_compiled);
+                    char * str_1 = reinterpret_cast<char *>(shmat(shmid_1, reinterpret_cast<void *>(0), 0));
+                    /// copy data from arguments column to shared memory
+                    memcpy(str_1, data_1.data(), data_size);
+                    client.call("fft", data_0.size());
+
+                    auto & res_column = columns[action.result_position];
+                    res_column.type = action.node->result_type;
+                    res_column.name = action.node->result_name;
+
+                    auto col_res1 = ColumnVector<Float32>::create();
+                    auto & data_col1 = col_res1->getData();
+                    data_col1.resize(data_0.size());
+                    memcpy(data_col1.data(), str_0, data_size);
+
+                    auto col_res2 = ColumnVector<Float32>::create();
+                    auto & data_col2 = col_res2->getData();
+                    data_col2.resize(data_1.size());
+                    memcpy(data_col2.data(), str_1, data_size);
+
+                    MutableColumns columns_res(2);
+                    columns_res[0] = std::move(col_res1);
+                    columns_res[1] = std::move(col_res2);
+                    res_column.column = ColumnTuple::create(std::move(columns_res));
+                    // destroy the shared memory
+					shmctl(shmid_0, IPC_RMID, nullptr);
+                    shmctl(shmid_1, IPC_RMID, nullptr);
+
+                    for (const auto & arg : action.arguments)
+                    {
+                        if (!arg.needed_later)
+                            columns[arg.pos] = ColumnWithTypeAndName{};
+                    }
+                }
+                if (func_name == "mm")
+                {
+                    assert(action.arguments.size() == 4);
+                    /// get data
+                    const auto * col_0 = checkAndGetColumn<ColumnVector<Float32>>(columns[action.arguments[0].pos].column.get());
+                    const auto & data_0 = col_0->getData();
+                    const auto * col_1 = checkAndGetColumn<ColumnVector<Float32>>(columns[action.arguments[1].pos].column.get());
+                    const auto & data_1 = col_1->getData();
+                    size_t data_size = data_0.size() * sizeof(Float32);
+                    /// create shared memory and copy data
+                    std::string arg0 = "mm_args0";
+                    std::string arg1 = "mm_args1";
+                    int magic = 7;
+                    key_t key_0 = ftok(arg0.c_str(), magic);
+                    int shmid_0 = shmget(key_0, data_size, 0666 | IPC_CREAT);
+                    key_t key_1 = ftok(arg1.c_str(), magic);
+                    int shmid_1 = shmget(key_1, data_size, 0666 | IPC_CREAT);
+                    /// attach to shared memory
+                    char * str_0 = reinterpret_cast<char *>(shmat(shmid_0, reinterpret_cast<void *>(0), 0));
+                    /// copy data from arguments column to shared memory
+                    memcpy(str_0, data_0.data(), data_size);
+
+                    char * str_1 = reinterpret_cast<char *>(shmat(shmid_1, reinterpret_cast<void *>(0), 0));
+                    /// copy data from arguments column to shared memory
+                    memcpy(str_1, data_1.data(), data_size);
+
+                    auto nums = columns[action.arguments[2].pos].column->getUInt(0);
+                    auto matrix_size = columns[action.arguments[3].pos].column->getUInt(0);
+                    client.call("mm",nums, matrix_size); 
+
+                    auto & res_column = columns[action.result_position];
+                    res_column.type = action.node->result_type;
+                    res_column.name = action.node->result_name;
+
+                    auto col_res = ColumnVector<Float32>::create();
+                    auto & data_col = col_res->getData();
+                    data_col.resize(data_0.size());
+                    memcpy(data_col.data(), str_0, data_size);
+
+					res_column.column = std::move(col_res);
+
+                    // destroy the shared memory
+					shmctl(shmid_0, IPC_RMID, nullptr);
+                    shmctl(shmid_1, IPC_RMID, nullptr);
+
+                    for (const auto & arg : action.arguments)
+                    {
+                        if (!arg.needed_later)
+                            columns[arg.pos] = ColumnWithTypeAndName{};
+                    }
+                }
+                else if (func_name == "echoData")
+                {
+                    assert(action.arguments.size() == 2);
+                    /// get data
+                    const auto * col = checkAndGetColumn<ColumnString>(columns[action.arguments[0].pos].column.get());
+                    const auto & data = col->getChars();
+                    const auto & offset = col->getOffsets();
+                    size_t data_size = offset[0] - offset[-1] - 1;
+                    /// create shared memory and copy data
+                    std::string file_name = "column_data";
+                    int magic = 7;
+                    key_t key = ftok(file_name.c_str(), magic);
+                    int shmid = shmget(key, data_size, 0666 | IPC_CREAT);
+                    /// attach to shared memory
+                    char * str = reinterpret_cast<char *>(shmat(shmid, reinterpret_cast<void *>(0), 0));
+                    /// copy data from arguments column to shared memory
+                    memcpy(str, data.data(), data_size);
+                    /// detach from shared memory
+                    shmdt(str);
+
+                    int device = columns[action.arguments[1].pos].column->getUInt(0);
+
+                    auto res = client.call("echoData", file_name, magic, device).as<UInt64>();
+
+                    auto & res_column = columns[action.result_position];
+                    res_column.type = action.node->result_type;
+                    res_column.name = action.node->result_name;
+                    res_column.column = DataTypeUInt64{}.createColumnConst(num_rows, res);
+                    // destroy the shared memory
+                    shmctl(shmid, IPC_RMID, nullptr);
+                    for (const auto & arg : action.arguments)
+                    {
+                        if (!arg.needed_later)
+                            columns[arg.pos] = ColumnWithTypeAndName{};
+                    }
+                }
+                else if (func_name == "PC")
+                {
+                    assert(action.arguments.size() == 2);
+                    auto data = columns[action.arguments[0].pos].column->getUInt(0);
+                    int device = columns[action.arguments[1].pos].column->getUInt(0);
+                    auto res = client.call("pcExec", data, device).as<UInt64>();
+
+                    auto & res_column = columns[action.result_position];
+                    res_column.type = action.node->result_type;
+                    res_column.name = action.node->result_name;
+                    res_column.column = DataTypeUInt64{}.createColumnConst(num_rows, res);
+
+                    for (const auto & arg : action.arguments)
+                    {
+                        if (!arg.needed_later)
+                            columns[arg.pos] = ColumnWithTypeAndName{};
+                    }
+                }
+                else if (func_name == "MTD")
+                {
+                    assert(action.arguments.size() == 2);
+                    auto data = columns[action.arguments[0].pos].column->getUInt(0);
+                    int device = columns[action.arguments[1].pos].column->getUInt(0);
+                    auto res = client.call("mtdExec", data, device).as<UInt64>();
+
+                    auto & res_column = columns[action.result_position];
+                    res_column.type = action.node->result_type;
+                    res_column.name = action.node->result_name;
+                    res_column.column = DataTypeUInt64{}.createColumnConst(num_rows, res);
+
+                    for (const auto & arg : action.arguments)
+                    {
+                        if (!arg.needed_later)
+                            columns[arg.pos] = ColumnWithTypeAndName{};
+                    }
+                }
+                else if (func_name == "DBF")
+                {
+                    assert(action.arguments.size() == 2);
+                    auto data = columns[action.arguments[0].pos].column->getUInt(0);
+                    int device = columns[action.arguments[1].pos].column->getUInt(0);
+                    auto res = client.call("dbfExec", data, device).as<UInt64>();
+
+                    auto & res_column = columns[action.result_position];
+                    res_column.type = action.node->result_type;
+                    res_column.name = action.node->result_name;
+                    res_column.column = DataTypeUInt64{}.createColumnConst(num_rows, res);
+
+                    for (const auto & arg : action.arguments)
+                    {
+                        if (!arg.needed_later)
+                            columns[arg.pos] = ColumnWithTypeAndName{};
+                    }
+                }
+            }
             else
             {
-                ProfileEvents::increment(ProfileEvents::FunctionExecute);
-                if (action.node->is_function_compiled)
-                    ProfileEvents::increment(ProfileEvents::CompiledFunctionExecute);
+                auto & res_column = columns[action.result_position];
+                if (res_column.type || res_column.column)
+                    throw Exception("Result column is not empty", ErrorCodes::LOGICAL_ERROR);
 
-                res_column.column = action.node->function->execute(arguments, res_column.type, num_rows, dry_run);
+                res_column.type = action.node->result_type;
+                res_column.name = action.node->result_name;
+
+                if (action.node->column)
+                {
+                    /// Do not execute function if it's result is already known.
+                    res_column.column = action.node->column->cloneResized(num_rows);
+                    break;
+                }
+
+                ColumnsWithTypeAndName arguments(action.arguments.size());
+                for (size_t i = 0; i < arguments.size(); ++i)
+                {
+                    if (!action.arguments[i].needed_later)
+                        arguments[i] = std::move(columns[action.arguments[i].pos]);
+                    else
+                        arguments[i] = columns[action.arguments[i].pos];
+                }
+
+                if (action.is_lazy_executed)
+                    res_column.column = ColumnFunction::create(
+                        num_rows, action.node->function_base, std::move(arguments), true, action.node->is_function_compiled);
+                else
+                {
+                    ProfileEvents::increment(ProfileEvents::FunctionExecute);
+                    if (action.node->is_function_compiled)
+                        ProfileEvents::increment(ProfileEvents::CompiledFunctionExecute);
+
+                    res_column.column = action.node->function->execute(arguments, res_column.type, num_rows, dry_run);
+                }
             }
             break;
         }

@@ -49,6 +49,8 @@ void registerTableFunctions()
 #endif
 
     registerTableFunctionDictionary(factory);
+
+    registerTableFunctionWL(factory);
 }
 
 }

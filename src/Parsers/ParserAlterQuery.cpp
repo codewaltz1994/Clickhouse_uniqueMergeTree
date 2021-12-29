@@ -127,6 +127,9 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
     ParserNameList values_p;
     ParserSelectWithUnionQuery select_p;
     ParserTTLExpressionList parser_ttl_list;
+    ParserCompoundIdentifier table_name_p(true, true);
+
+    ASTPtr to_table;
 
     switch (alter_object)
     {
@@ -760,6 +763,13 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
             }
             else if (s_modify_query.ignore(pos, expected))
             {
+                if (ParserKeyword{"TO"}.ignore(pos, expected))
+                {
+                    // TO [db.]table
+                    if (!table_name_p.parse(pos, to_table, expected))
+                        return false;
+                    command->to_table_id = to_table->as<ASTTableIdentifier>()->getTableId();
+                }
                 if (!select_p.parse(pos, command->select, expected))
                     return false;
                 command->type = ASTAlterCommand::MODIFY_QUERY;

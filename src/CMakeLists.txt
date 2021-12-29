@@ -469,6 +469,14 @@ if (USE_BROTLI)
     target_include_directories (clickhouse_common_io SYSTEM BEFORE PRIVATE ${BROTLI_INCLUDE_DIR})
 endif()
 
+if (USE_RPCLIB)
+	target_link_libraries (clickhouse_common_io PUBLIC ${RPC_LIBRARY})
+	target_include_directories (clickhouse_common_io SYSTEM BEFORE PUBLIC
+		${RPC_INCLUDE_DIR})
+	dbms_target_link_libraries(PUBLIC ${RPC_LIBRARY})
+	dbms_target_include_directories (SYSTEM BEFORE PUBLIC ${RPC_INCLUDE_DIR})
+endif()
+
 if (USE_AMQPCPP)
     dbms_target_link_libraries(PUBLIC ${AMQPCPP_LIBRARY})
     dbms_target_include_directories (SYSTEM BEFORE PUBLIC ${AMQPCPP_INCLUDE_DIR})

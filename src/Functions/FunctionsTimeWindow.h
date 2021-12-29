@@ -38,7 +38,8 @@ enum TimeWindowFunctionName
     HOP,
     HOP_START,
     HOP_END,
-    WINDOW_ID
+    WINDOW_ID,
+    FRAME
 };
 
 template <IntervalKind::Kind unit>
@@ -152,4 +153,5 @@ using FunctionHop = FunctionTimeWindow<HOP>;
 using FunctionWindowId = FunctionTimeWindow<WINDOW_ID>;
 using FunctionHopStart = FunctionTimeWindow<HOP_START>;
 using FunctionHopEnd = FunctionTimeWindow<HOP_END>;
+using FunctionFrame = FunctionTimeWindow<FRAME>;
 }

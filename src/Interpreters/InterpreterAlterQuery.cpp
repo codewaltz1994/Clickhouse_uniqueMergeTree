@@ -99,6 +99,14 @@ BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
         auto * command_ast = child->as<ASTAlterCommand>();
         if (auto alter_command = AlterCommand::parse(command_ast))
         {
+            if (alter_command->type == AlterCommand::MODIFY_QUERY)
+            {
+                if (alter_command->to_table_id && alter_command->to_table_id.database_name.empty())
+                {
+                    String current_database = getContext()->getCurrentDatabase();
+                    alter_command->to_table_id.database_name = current_database;
+                }
+            }
             alter_commands.emplace_back(std::move(*alter_command));
         }
         else if (auto partition_command = PartitionCommand::parse(command_ast))

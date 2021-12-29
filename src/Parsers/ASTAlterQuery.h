@@ -6,6 +6,7 @@
 #include <Parsers/ASTTTLElement.h>
 #include <Parsers/IAST.h>
 
+#include <Interpreters/StorageID.h>
 
 namespace DB
 {
@@ -203,6 +204,9 @@ public:
 
     /// Which property user want to remove
     String remove_property;
+
+    /// For modify query of Window View
+    StorageID to_table_id = StorageID::createEmpty();
 
     String getID(char delim) const override { return "AlterCommand" + (delim + std::to_string(static_cast<int>(type))); }
 

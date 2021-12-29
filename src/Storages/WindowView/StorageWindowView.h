@@ -105,6 +105,7 @@ class StorageWindowView final : public shared_ptr_helper<StorageWindowView>, pub
     friend class TimestampTransformation;
     friend class WindowViewSource;
     friend class WatermarkTransform;
+    friend class FrameMarkTransform;
 
 public:
     String getName() const override { return "WindowView"; }
@@ -147,6 +148,10 @@ public:
 
     ASTPtr getMergeableQuery() const { return mergeable_query->clone(); }
 
+    void alter(const AlterCommands & params, ContextPtr context, AlterLockHolder & table_lock_holder) override;
+
+    void checkAlterIsPossible(const AlterCommands & commands, ContextPtr context) const override;
+
 private:
     Poco::Logger * log;
 
@@ -157,10 +162,11 @@ private:
     /// Used to fetch the mergeable state and generate the final result. e.g. SELECT * FROM * GROUP BY tumble(____timestamp, *)
     ASTPtr final_query;
 
-    ContextMutablePtr window_view_context;
     bool is_proctime{true};
     bool is_time_column_func_now;
-    bool is_tumble; // false if is hop
+    bool is_tumble{false};
+    bool is_hop{false};
+    bool is_frame{false};
     std::atomic<bool> shutdown_called{false};
     bool has_inner_table{true};
     mutable Block sample_block;
@@ -180,9 +186,12 @@ private:
     std::condition_variable_any fire_signal_condition;
     std::condition_variable fire_condition;
 
+    UInt32 max_frame = 0;
+    UInt32 max_fired_frame = 0;
+
+    UInt32 innner_table_version = 0;
     /// Mutex for the blocks and ready condition
     std::mutex mutex;
-    std::mutex flush_table_mutex;
     std::shared_mutex fire_signal_mutex;
     mutable std::mutex sample_block_lock; /// Mutex to protect access to sample block and inner_blocks_query
 
@@ -198,7 +207,7 @@ private:
     String window_id_name;
     String window_id_alias;
     String window_column_name;
-    String timestamp_column_name;
+    String timestamp_or_frame_column_name;
 
     StorageID select_table_id = StorageID::createEmpty();
     StorageID target_table_id = StorageID::createEmpty();
@@ -233,8 +242,14 @@ private:
     void updateMaxWatermark(UInt32 watermark);
     void updateMaxTimestamp(UInt32 timestamp);
 
+    void updateMaxFrame(UInt32 frame);
+
     ASTPtr getFinalQuery() const { return final_query->clone(); }
     ASTPtr getFetchColumnQuery(UInt32 w_start, UInt32 w_end) const;
+
+    ASTPtr getRecomputeQuery() const;
+    std::pair<BlocksPtr, Block> getRestoreWindowState();
+    void writeNewStateToInnerTable(const BlocksPtr & new_blocks, const Block & header);
 
     StoragePtr getParentStorage() const;
 

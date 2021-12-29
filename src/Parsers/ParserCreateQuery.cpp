@@ -798,6 +798,7 @@ bool ParserCreateWindowViewQuery::parseImpl(Pos & pos, ASTPtr & node, Expected &
     ParserKeyword s_as("AS");
     ParserKeyword s_view("VIEW");
     ParserKeyword s_window("WINDOW");
+    ParserKeyword s_signal("SIGNAL");
     ParserToken s_dot(TokenType::Dot);
     ParserToken s_eq(TokenType::Equals);
     ParserToken s_lparen(TokenType::OpeningRoundBracket);
@@ -834,8 +835,19 @@ bool ParserCreateWindowViewQuery::parseImpl(Pos & pos, ASTPtr & node, Expected &
             return false;
     }
 
-    if (!s_window.ignore(pos, expected))
+    Expected tmp_expected;
+    if (s_window.checkWithoutMoving(pos, tmp_expected))
+    {
+        s_window.ignore(pos, expected);
+    }
+    else if (s_signal.checkWithoutMoving(pos, tmp_expected))
+    {
+        s_signal.ignore(pos, expected);
+    }
+    else
+    {
         return false;
+    }
 
     if (!s_view.ignore(pos, expected))
        return false;

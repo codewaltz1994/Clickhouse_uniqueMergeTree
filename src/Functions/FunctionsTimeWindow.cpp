@@ -1,15 +1,16 @@
 #include <numeric>
 
-#include <Columns/ColumnsNumber.h>
 #include <Columns/ColumnTuple.h>
+#include <Columns/ColumnsNumber.h>
 #include <DataTypes/DataTypeDate.h>
 #include <DataTypes/DataTypeDateTime.h>
-#include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/DataTypeTuple.h>
-#include <Functions/extractTimeZoneFromFunctionArguments.h>
+#include <DataTypes/DataTypesNumber.h>
 #include <Functions/FunctionFactory.h>
 #include <Functions/FunctionHelpers.h>
 #include <Functions/FunctionsTimeWindow.h>
+#include <Functions/castTypeToEither.h>
+#include <Functions/extractTimeZoneFromFunctionArguments.h>
 
 namespace DB
 {
@@ -415,17 +416,102 @@ struct TimeWindowImpl<HOP>
 };
 
 template <>
+struct TimeWindowImpl<FRAME>
+{
+    static constexpr auto name = "frame";
+
+    template <typename F>
+    static bool castType(const IDataType * type, F && f)
+    {
+        return castTypeToEither<DataTypeUInt8, DataTypeUInt16, DataTypeUInt32>(type, std::forward<F>(f));
+    }
+
+    [[maybe_unused]] static DataTypePtr getReturnType(const ColumnsWithTypeAndName & arguments, const String & function_name)
+    {
+        if (arguments.size() != 1)
+        {
+            throw Exception(
+                "Number of arguments for function " + function_name + " doesn't match: passed " + toString(arguments.size())
+                    + ", should be 1",
+                ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
+        }
+        if (!isUnsignedInteger(arguments[0].type))
+        {
+            throw Exception(
+                "Illegal type of first argument of function " + function_name + " should be unsigned integer, passed "
+                    + arguments[0].type->getName(),
+                ErrorCodes::ILLEGAL_COLUMN);
+        }
+
+        auto data_type = std::make_shared<DataTypeUInt32>();
+        return std::make_shared<DataTypeTuple>(DataTypes{data_type, data_type});
+    }
+
+    static ColumnPtr dispatchForColumns(const ColumnsWithTypeAndName & arguments, const String & function_name)
+    {
+        ColumnPtr res;
+        if (castType(arguments[0].type.get(), [&](const auto & type) {
+                using DataType = std::decay_t<decltype(type)>;
+                using T = typename DataType::FieldType;
+                const ColumnVector<T> * column = checkAndGetColumn<ColumnVector<T>>(arguments[0].column.get());
+                res = executeFrame(*column);
+                return true;
+            }))
+        {
+            return res;
+        }
+        throw Exception(
+            "Illegal type of first argument of function " + function_name + " should be unsigned integer, passed "
+                + arguments[0].type->getName(),
+            ErrorCodes::ILLEGAL_COLUMN);
+    }
+
+    template <typename FromType>
+    static ColumnPtr executeFrame(const ColumnVector<FromType> & frame_column)
+    {
+        auto start = ColumnVector<UInt32>::create();
+        auto end = ColumnVector<UInt32>::create();
+
+        auto size = frame_column.size();
+
+        auto & start_data = start->getData();
+        auto & end_data = end->getData();
+        const auto & frame_data = frame_column.getData();
+        start_data.resize(size);
+        end_data.resize(size);
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            start_data[i] = end_data[i] = frame_data[i];
+        }
+
+        MutableColumns result;
+        result.emplace_back(std::move(start));
+        result.emplace_back(std::move(end));
+        return ColumnTuple::create(std::move(result));
+    }
+};
+
+template <>
 struct TimeWindowImpl<WINDOW_ID>
 {
     static constexpr auto name = "windowID";
 
     [[maybe_unused]] static DataTypePtr getReturnType(const ColumnsWithTypeAndName & arguments, const String & function_name)
     {
-        bool result_type_is_date;
+        bool result_type_is_date = false;
         IntervalKind interval_kind_1;
         IntervalKind interval_kind_2;
 
-        if (arguments.size() == 2)
+        if (arguments.size() == 1)
+        {
+            if (!isUnsignedInteger(arguments[0].type))
+                throw Exception(
+                    "Illegal type of first argument of frame function, should be unsigned integer, passed " + arguments[0].type->getName(),
+                    ErrorCodes::ILLEGAL_COLUMN);
+        }
+
+        else if (arguments.size() == 2)
         {
             checkFirstArgument(arguments.at(0), function_name);
             checkIntervalArgument(arguments.at(1), function_name, interval_kind_1, result_type_is_date);
@@ -551,9 +637,18 @@ struct TimeWindowImpl<WINDOW_ID>
         return executeWindowBound(column, 1, function_name);
     }
 
+    [[maybe_unused]] static ColumnPtr dispatchForFrameColumns(const ColumnsWithTypeAndName & arguments, const String & function_name)
+    {
+        ColumnPtr column = TimeWindowImpl<FRAME>::dispatchForColumns(arguments, function_name);
+        return executeWindowBound(column, 1, function_name);
+    }
+
+
     [[maybe_unused]] static ColumnPtr dispatchForColumns(const ColumnsWithTypeAndName & arguments, const String & function_name)
     {
-        if (arguments.size() == 2)
+        if (arguments.size() == 1)
+            return dispatchForFrameColumns(arguments, function_name);
+        else if (arguments.size() == 2)
             return dispatchForTumbleColumns(arguments, function_name);
         else
         {
@@ -654,6 +749,7 @@ void registerFunctionsTimeWindow(FunctionFactory& factory)
 {
     factory.registerFunction<FunctionTumble>();
     factory.registerFunction<FunctionHop>();
+    factory.registerFunction<FunctionFrame>();
     factory.registerFunction<FunctionTumbleStart>();
     factory.registerFunction<FunctionTumbleEnd>();
     factory.registerFunction<FunctionHopStart>();

@@ -417,8 +417,13 @@ void ASTAlterCommand::formatImpl(const FormatSettings & settings, FormatState & 
     }
     else if (type == ASTAlterCommand::MODIFY_QUERY)
     {
-        settings.ostr << (settings.hilite ? hilite_keyword : "") << "MODIFY QUERY " << settings.nl_or_ws
-                      << (settings.hilite ? hilite_none : "");
+        settings.ostr << (settings.hilite ? hilite_keyword : "") << "MODIFY QUERY " << (settings.hilite ? hilite_none : "");
+        if (!to_table_id.empty())
+        {
+            settings.ostr << (settings.hilite ? hilite_keyword : "") << "TO " << (settings.hilite ? hilite_none : "")
+                          << (!to_table_id.database_name.empty() ? backQuoteIfNeed(to_table_id.database_name) + "." : "")
+                          << backQuoteIfNeed(to_table_id.table_name) << settings.nl_or_ws << (settings.hilite ? hilite_none : "");
+        }
         select->formatImpl(settings, state, frame);
     }
     else if (type == ASTAlterCommand::LIVE_VIEW_REFRESH)

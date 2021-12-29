@@ -139,6 +139,8 @@ public:
 
     void getLambdaArgumentTypesImpl(DataTypes & arguments) const override { function->getLambdaArgumentTypes(arguments); }
 
+    bool isGpuFunction() const { return function->is_gpu_function; }
+
 private:
     std::shared_ptr<IFunction> function;
 };

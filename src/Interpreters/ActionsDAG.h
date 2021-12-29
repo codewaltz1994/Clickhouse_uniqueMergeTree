@@ -83,6 +83,8 @@ public:
         /// This property is kept after constant folding of non-deterministic functions like 'now', 'today'.
         bool is_deterministic = true;
 
+        bool is_gpu_function = false;
+
         /// For COLUMN node and propagated constants.
         ColumnPtr column;
 

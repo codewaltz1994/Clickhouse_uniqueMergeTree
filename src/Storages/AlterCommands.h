@@ -137,6 +137,7 @@ struct AlterCommand
     std::set<String> settings_resets;
 
     /// For MODIFY_QUERY
+    StorageID to_table_id = StorageID::createEmpty();
     ASTPtr select = nullptr;
 
     /// Target column name

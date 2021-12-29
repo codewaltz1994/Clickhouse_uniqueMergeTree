@@ -356,6 +356,7 @@ std::optional<AlterCommand> AlterCommand::parse(const ASTAlterCommand * command_
         command.ast = command_ast->clone();
         command.type = AlterCommand::MODIFY_QUERY;
         command.select = command_ast->select;
+        command.to_table_id = command_ast->to_table_id;
         return command;
     }
     else if (command_ast->type == ASTAlterCommand::RENAME_COLUMN)
