@@ -250,3 +250,6 @@
 [submodule "contrib/azure"]
 	path = contrib/azure
 	url = https://github.com/ClickHouse-Extras/azure-sdk-for-cpp.git
+[submodule "contrib/rpclib"]
+	path = contrib/rpclib
+	url = https://github.com/rpclib/rpclib.git
