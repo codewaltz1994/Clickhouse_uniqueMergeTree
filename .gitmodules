@@ -253,3 +253,6 @@
 [submodule "contrib/rpclib"]
 	path = contrib/rpclib
 	url = https://github.com/rpclib/rpclib.git
+[submodule "contrib/opencv"]
+	path = contrib/opencv
+	url = https://github.com/opencv/opencv.git
