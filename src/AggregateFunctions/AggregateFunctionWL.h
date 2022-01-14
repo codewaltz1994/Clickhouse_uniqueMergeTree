@@ -83,7 +83,7 @@ class AggregateFunctionWL final : public IAggregateFunctionDataHelper<Data, Aggr
 private:
 
 public:
-    String getName() const override { return "WL"; }
+    String getName() const override { return "accWL"; }
 
     explicit AggregateFunctionWL(const DataTypes & arguments)
         : IAggregateFunctionDataHelper<Data, AggregateFunctionWL<T, Data>>(arguments, {})
@@ -147,7 +147,7 @@ public:
         /// detach from shared memory
         shmdt(str);
 
-        auto vec = client.call("wl", file_name, magic, data_size).template as<std::vector<float>>();
+        auto vec = client.call("wl_1", file_name, magic, data_size).template as<std::vector<float>>();
         Array array(vec.begin(), vec.end());
         assert_cast<ColumnArray &>(to).insert(array);
         shmctl(shmid, IPC_RMID, nullptr);

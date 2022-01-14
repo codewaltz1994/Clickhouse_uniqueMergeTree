@@ -47,7 +47,7 @@ namespace
 
 void registerAggregateFunctionAcc(AggregateFunctionFactory & factory)
 {
-    factory.registerFunction("acc", createAggregateFunctionAcc<AggregateFunctionAccData>);
+    factory.registerFunction("acc", createAggregateFunctionAcc<AggregateFunctionAccData>, AggregateFunctionFactory::CaseInsensitive);
 }
 
 }
