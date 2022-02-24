@@ -124,6 +124,9 @@ set_source_files_properties("pointInPolygon.cpp" PROPERTIES COMPILE_FLAGS -fno-s
 # target_link_libraries(clickhouse_functions PRIVATE ${S2_LIBRARY})
 target_include_directories(clickhouse_functions SYSTEM PUBLIC ${S2_GEOMETRY_INCLUDE_DIR})
 
+add_subdirectory(Gpu)
+target_link_libraries(clickhouse_functions PRIVATE clickhouse_functions_gpu)
+
 if (ENABLE_FUZZING)
     add_compile_definitions(FUZZING_MODE=1)
 endif ()

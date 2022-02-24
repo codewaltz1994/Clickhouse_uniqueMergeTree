@@ -164,6 +164,10 @@ const ActionsDAG::Node & ActionsDAG::addFunction(
     node.function_builder = function;
     node.children = std::move(children);
 
+    const auto * func_adaptor = dynamic_cast<FunctionToOverloadResolverAdaptor *>(function.get());
+    if (func_adaptor)
+        node.is_gpu_function = func_adaptor->isGpuFunction();
+
     bool all_const = true;
     ColumnsWithTypeAndName arguments(num_arguments);
 

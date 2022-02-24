@@ -18,11 +18,13 @@ UInt32 getMaxCompressedDataSize(int uncompressed_size)
     return LZ4_COMPRESSBOUND(uncompressed_size);
 }
 
+/// dst should be allocated, return compressed size
 UInt32 LZ4Compress(const char * src, UInt32 src_size, char * dst)
 {
     return LZ4_compress_default(src, dst, src_size, getMaxCompressedDataSize(src_size));
 }
 
+/// dst should be allocated
 void LZ4Decompress(const char * src, UInt32 src_size, char * dst, UInt32 uncompressed_size)
 {
     LZ4::PerformanceStatistics stat;
