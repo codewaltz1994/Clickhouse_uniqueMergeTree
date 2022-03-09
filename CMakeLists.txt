@@ -39,7 +39,9 @@ else()
     set(RECONFIGURE_MESSAGE_LEVEL WARNING)
 endif()
 
-enable_language(C CXX ASM)
+enable_language(C CXX CUDA ASM)
+
+FIND_PACKAGE(CUDA REQUIRED)
 
 include (cmake/arch.cmake)
 include (cmake/target.cmake)
