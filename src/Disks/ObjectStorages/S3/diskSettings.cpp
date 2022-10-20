@@ -18,6 +18,7 @@
 #include <Disks/ObjectStorages/S3/ProxyConfiguration.h>
 #include <Disks/ObjectStorages/S3/ProxyListConfiguration.h>
 #include <Disks/ObjectStorages/S3/ProxyResolverConfiguration.h>
+#include <Disks/ObjectStorages/S3/ProxyPalorisConfiguration.h>
 #include <Disks/ObjectStorages/DiskObjectStorageCommon.h>
 #include <Disks/DiskRestartProxy.h>
 #include <Disks/DiskLocal.h>
@@ -64,6 +65,26 @@ std::shared_ptr<S3::ProxyResolverConfiguration> getProxyResolverConfiguration(
     return std::make_shared<S3::ProxyResolverConfiguration>(endpoint, proxy_scheme, proxy_port, cache_ttl);
 }
 
+std::shared_ptr<S3::ProxyPalorisConfiguration>
+getPalorisConfiguration(const String & prefix, const Poco::Util::AbstractConfiguration & proxy_resolver_config)
+{
+    auto paloris_host = proxy_resolver_config.getString(prefix + ".paloris_host");
+    auto service_name = proxy_resolver_config.getString(prefix + ".service_name");
+    auto service_namespace = proxy_resolver_config.getString(prefix + ".service_namespace");
+    if (service_name.empty() || service_namespace.empty())
+    {
+        throw Exception("Service name or service namespace in proxy palorix config can not be empty", ErrorCodes::BAD_ARGUMENTS);
+    }
+    auto cache_ttl = proxy_resolver_config.getUInt(prefix + ".host_cache_time", 10);
+    LOG_DEBUG(
+        &Poco::Logger::get("DiskS3"),
+        "Configured proxy paloris: {}, Service name: {}, Service namespace: {}",
+        paloris_host,
+        service_name,
+        service_namespace);
+    return std::make_shared<S3::ProxyPalorisConfiguration>(paloris_host, service_name, service_namespace, cache_ttl);
+}
+
 std::shared_ptr<S3::ProxyListConfiguration> getProxyListConfiguration(
     const String & prefix, const Poco::Util::AbstractConfiguration & proxy_config)
 {
@@ -106,6 +127,14 @@ std::shared_ptr<S3::ProxyConfiguration> getProxyConfiguration(const String & pre
             throw Exception("Multiple proxy resolver configurations aren't allowed", ErrorCodes::BAD_ARGUMENTS);
 
         return getProxyResolverConfiguration(prefix + ".proxy.resolver", config);
+    }
+
+    if (auto paloris_configs = std::count(config_keys.begin(), config_keys.end(), "paloris"))
+    {
+        if (paloris_configs > 1)
+            throw Exception("Multiple paloris resolver configurations aren't allowed", ErrorCodes::BAD_ARGUMENTS);
+
+        return getPalorisConfiguration(prefix + ".proxy.paloris", config);
     }
 
     return getProxyListConfiguration(prefix + ".proxy", config);
