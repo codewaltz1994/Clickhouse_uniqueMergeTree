@@ -79,9 +79,14 @@ void StorageSystemClusters::writeCluster(MutableColumns & res_columns, const Nam
             res_columns[i++]->insert(shard_info.shard_num);
             res_columns[i++]->insert(shard_info.weight);
             res_columns[i++]->insert(replica_index + 1);
-            res_columns[i++]->insert(address.second_host_name.empty() ? address.host_name : address.second_host_name);
-            auto resolved = address.getResolvedAddress();
-            res_columns[i++]->insert(resolved ? resolved->host().toString() : String());
+            res_columns[i++]->insert(address.host_name);
+            auto host_address = address.second_host_name;
+            if (host_address.empty())
+            {
+                auto resolved = address.getResolvedAddress();
+                host_address = resolved ? resolved->host().toString() : String();
+            }
+            res_columns[i++]->insert(host_address);
             res_columns[i++]->insert(address.port);
             res_columns[i++]->insert(address.is_local);
             res_columns[i++]->insert(address.user);
