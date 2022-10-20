@@ -107,6 +107,9 @@ public:
     virtual void describeIndexes(JSONBuilder::JSONMap & /*map*/) const {}
     virtual void describeIndexes(FormatSettings & /*settings*/) const {}
 
+    virtual void describeTable(JSONBuilder::JSONMap & /*map*/) const {}
+    virtual void describeTable(FormatSettings & /*settings*/) const {}
+
     /// Get description of processors added in current step. Should be called after updatePipeline().
     virtual void describePipeline(FormatSettings & /*settings*/) const {}
 

@@ -111,9 +111,11 @@ public:
 
     void describeActions(FormatSettings & format_settings) const override;
     void describeIndexes(FormatSettings & format_settings) const override;
+    void describeTable(FormatSettings & format_settings) const override;
 
     void describeActions(JSONBuilder::JSONMap & map) const override;
     void describeIndexes(JSONBuilder::JSONMap & map) const override;
+    void describeTable(JSONBuilder::JSONMap & map) const override;
 
     void addFilter(ActionsDAGPtr expression, std::string column_name)
     {

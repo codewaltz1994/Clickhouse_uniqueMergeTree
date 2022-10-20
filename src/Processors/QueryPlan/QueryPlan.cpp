@@ -235,6 +235,9 @@ static void explainStep(const IQueryPlanStep & step, JSONBuilder::JSONMap & map,
 
     if (options.indexes)
         step.describeIndexes(map);
+
+    if (options.tables)
+        step.describeTable(map);
 }
 
 JSONBuilder::ItemPtr QueryPlan::explainPlan(const ExplainPlanOptions & options)
@@ -348,6 +351,9 @@ static void explainStep(
 
     if (options.indexes)
         step.describeIndexes(settings);
+
+    if (options.tables)
+        step.describeTable(settings);
 }
 
 std::string debugExplainStep(const IQueryPlanStep & step)
