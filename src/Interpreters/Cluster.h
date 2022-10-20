@@ -90,6 +90,7 @@ public:
         */
 
         String host_name;
+        String second_host_name;
         UInt16 port{0};
         String user;
         String password;

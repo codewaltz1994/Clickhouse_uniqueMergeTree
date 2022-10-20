@@ -100,6 +100,7 @@ Cluster::Address::Address(
     , replica_index(replica_index_)
 {
     host_name = config.getString(config_prefix + ".host");
+    second_host_name = config.getString(config_prefix + ".second_host", "");
     if (config.has(config_prefix + ".user"))
         user_specified = true;
 

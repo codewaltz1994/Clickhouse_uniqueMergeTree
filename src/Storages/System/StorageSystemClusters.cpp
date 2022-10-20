@@ -79,7 +79,7 @@ void StorageSystemClusters::writeCluster(MutableColumns & res_columns, const Nam
             res_columns[i++]->insert(shard_info.shard_num);
             res_columns[i++]->insert(shard_info.weight);
             res_columns[i++]->insert(replica_index + 1);
-            res_columns[i++]->insert(address.host_name);
+            res_columns[i++]->insert(address.second_host_name.empty() ? address.host_name : address.second_host_name);
             auto resolved = address.getResolvedAddress();
             res_columns[i++]->insert(resolved ? resolved->host().toString() : String());
             res_columns[i++]->insert(address.port);
