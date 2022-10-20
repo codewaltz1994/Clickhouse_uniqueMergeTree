@@ -1378,6 +1378,28 @@ void ReadFromMergeTree::describeIndexes(JSONBuilder::JSONMap & map) const
     }
 }
 
+void ReadFromMergeTree::describeTable(FormatSettings & format_settings) const
+{
+    auto result = getAnalysisResult();
+    auto database = getStorageID().getDatabaseName();
+    auto table = getStorageID().getTableName();
+    std::string prefix(format_settings.offset, format_settings.indent_char);
+    format_settings.out << prefix << "Database: " << database << '\n';
+    format_settings.out << prefix << "Table: " << table << '\n';
+    format_settings.out << prefix << "Rows: " << result.selected_rows << '\n';
+}
+
+void ReadFromMergeTree::describeTable(JSONBuilder::JSONMap & map) const
+{
+    auto result = getAnalysisResult();
+    auto database = getStorageID().getDatabaseName();
+    auto table = getStorageID().getTableName();
+    map.add("Database", database);
+    map.add("Table", table);
+    map.add("Rows", result.selected_rows);
+}
+
+
 bool MergeTreeDataSelectAnalysisResult::error() const
 {
     return std::holds_alternative<std::exception_ptr>(result);

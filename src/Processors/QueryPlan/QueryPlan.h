@@ -73,6 +73,8 @@ public:
         bool indexes = false;
         /// Add information about sorting
         bool sorting = false;
+        /// Add Database and table information about tables actions;
+        bool tables = false;
     };
 
     struct ExplainPipelineOptions
