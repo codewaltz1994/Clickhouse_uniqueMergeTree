@@ -203,6 +203,11 @@ DataPartStorageBuilderPtr DataPartStorageOnDisk::getBuilder() const
     return std::make_shared<DataPartStorageBuilderOnDisk>(volume, root_path, part_dir);
 }
 
+DiskPtr DataPartStorageOnDisk::getDisk() const
+{
+    return volume->getDisk();
+}
+
 void DataPartStorageOnDisk::remove(
     bool can_remove_shared_data,
     const NameSet & names_not_to_remove,
@@ -371,6 +376,10 @@ void DataPartStorageOnDisk::clearDirectory(
             request.emplace_back(fs::path(dir) / "txn_version.txt", true);
 
         disk->removeSharedFiles(request, !can_remove_shared_data, names_not_to_remove);
+
+        /// Remove deletes bitmap for UniqueMergeTree Data Part
+        if (disk->exists(fs::path(dir) / "deletes"))
+            disk->removeSharedRecursive(fs::path(dir) / "deletes", false, {});
         disk->removeDirectory(dir);
     }
     catch (...)

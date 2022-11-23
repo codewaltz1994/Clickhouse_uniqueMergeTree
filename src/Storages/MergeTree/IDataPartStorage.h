@@ -207,6 +207,8 @@ public:
     /// us to build parts, while storage should be read-only method to access part properties
     /// related to disk. However our code is really tricky and sometimes we need ad-hoc builders.
     virtual DataPartStorageBuilderPtr getBuilder() const = 0;
+
+    virtual DiskPtr getDisk() const = 0;
 };
 
 using DataPartStoragePtr = std::shared_ptr<IDataPartStorage>;

@@ -12,6 +12,7 @@
 #include <DataTypes/DataTypeArray.h>
 #include <Processors/Transforms/AggregatingTransform.h>
 
+#include <Storages/StorageUniqueMergeTree.h>
 
 #include <city.h>
 
@@ -38,7 +39,8 @@ MergeTreeBaseSelectProcessor::MergeTreeBaseSelectProcessor(
     const MergeTreeReaderSettings & reader_settings_,
     bool use_uncompressed_cache_,
     const Names & virt_column_names_,
-    std::optional<ParallelReadingExtension> extension_)
+    std::optional<ParallelReadingExtension> extension_,
+    StorageUniqueMergeTree * unique_mergetree_)
     : ISource(transformHeader(std::move(header), prewhere_info_, storage_.getPartitionValueType(), virt_column_names_))
     , storage(storage_)
     , storage_snapshot(storage_snapshot_)
@@ -51,6 +53,7 @@ MergeTreeBaseSelectProcessor::MergeTreeBaseSelectProcessor(
     , virt_column_names(virt_column_names_)
     , partition_value_type(storage.getPartitionValueType())
     , extension(extension_)
+    , unique_mergetree(unique_mergetree_)
 {
     header_without_virtual_columns = getPort().getHeader();
 
@@ -100,6 +103,8 @@ MergeTreeBaseSelectProcessor::MergeTreeBaseSelectProcessor(
 
         prewhere_actions->steps.emplace_back(std::move(prewhere_step));
     }
+
+    table_version = storage_snapshot->table_version;
 }
 
 
@@ -269,8 +274,14 @@ void MergeTreeBaseSelectProcessor::initializeRangeReaders(MergeTreeReadTask & cu
     /// Add filtering step with lightweight delete mask
     if (reader_settings.apply_deleted_mask && current_task.data_part->hasLightweightDelete())
     {
-        current_task.pre_range_readers.push_back(
-            MergeTreeRangeReader(pre_reader_for_step[0].get(), prev_reader, &lightweight_delete_filter_step, last_reader, non_const_virtual_column_names));
+        current_task.pre_range_readers.push_back(MergeTreeRangeReader(
+            pre_reader_for_step[0].get(),
+            prev_reader,
+            &lightweight_delete_filter_step,
+            last_reader,
+            non_const_virtual_column_names,
+            unique_mergetree,
+            table_version));
         prev_reader = &current_task.pre_range_readers.back();
         pre_readers_shift++;
     }
@@ -285,8 +296,14 @@ void MergeTreeBaseSelectProcessor::initializeRangeReaders(MergeTreeReadTask & cu
         for (size_t i = 0; i < prewhere_actions->steps.size(); ++i)
         {
             last_reader = reader->getColumns().empty() && (i + 1 == prewhere_actions->steps.size());
-            current_task.pre_range_readers.push_back(
-                MergeTreeRangeReader(pre_reader_for_step[i + pre_readers_shift].get(), prev_reader, &prewhere_actions->steps[i], last_reader, non_const_virtual_column_names));
+            current_task.pre_range_readers.push_back(MergeTreeRangeReader(
+                pre_reader_for_step[i + pre_readers_shift].get(),
+                prev_reader,
+                &prewhere_actions->steps[i],
+                last_reader,
+                non_const_virtual_column_names,
+                unique_mergetree,
+                table_version));
 
             prev_reader = &current_task.pre_range_readers.back();
         }
@@ -294,7 +311,8 @@ void MergeTreeBaseSelectProcessor::initializeRangeReaders(MergeTreeReadTask & cu
 
     if (!last_reader)
     {
-        current_task.range_reader = MergeTreeRangeReader(reader.get(), prev_reader, nullptr, true, non_const_virtual_column_names);
+        current_task.range_reader = MergeTreeRangeReader(
+            reader.get(), prev_reader, nullptr, true, non_const_virtual_column_names, unique_mergetree, table_version);
     }
     else
     {
@@ -424,6 +442,11 @@ namespace
             block.insert({column, std::make_shared<DataTypeUInt64>(), name});
         }
 
+        void insertInt64Column(const ColumnPtr & column, const String & name)
+        {
+            block.insert({column, std::make_shared<DataTypeInt64>(), name});
+        }
+
         void insertUUIDColumn(const ColumnPtr & column, const String & name)
         {
             block.insert({column, std::make_shared<DataTypeUUID>(), name});
@@ -527,6 +550,16 @@ static void injectPartConstVirtualColumns(
                     column = DataTypeUInt64().createColumn();
 
                 inserter.insertUInt64Column(column, virtual_column_name);
+            }
+            else if (virtual_column_name == "_part_min_block")
+            {
+                ColumnPtr column;
+                if (rows)
+                    column = DataTypeUInt64().createColumnConst(rows, task->data_part->info.min_block)->convertToFullColumnIfConst();
+                else
+                    column = DataTypeUInt64().createColumn();
+
+                inserter.insertInt64Column(column, virtual_column_name);
             }
             else if (virtual_column_name == "_part_uuid")
             {

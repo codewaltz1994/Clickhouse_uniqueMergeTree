@@ -59,6 +59,8 @@ using BackupEntries = std::vector<std::pair<String, std::shared_ptr<const IBacku
 class MergeTreeTransaction;
 using MergeTreeTransactionPtr = std::shared_ptr<MergeTreeTransaction>;
 
+class StorageUniqueMergeTree;
+
 /// Auxiliary struct holding information about the future merged or mutated part.
 struct EmergingPartInfo
 {
@@ -337,13 +339,14 @@ public:
         /// Merging mode. See above.
         enum Mode
         {
-            Ordinary            = 0,    /// Enum values are saved. Do not change them.
-            Collapsing          = 1,
-            Summing             = 2,
-            Aggregating         = 3,
-            Replacing           = 5,
-            Graphite            = 6,
+            Ordinary = 0, /// Enum values are saved. Do not change them.
+            Collapsing = 1,
+            Summing = 2,
+            Aggregating = 3,
+            Replacing = 5,
+            Graphite = 6,
             VersionedCollapsing = 7,
+            Unique = 8,
         };
 
         Mode mode;
@@ -459,7 +462,7 @@ public:
     StorageSnapshotPtr getStorageSnapshot(const StorageMetadataPtr & metadata_snapshot, ContextPtr query_context) const override;
 
     /// Load the set of data parts from disk. Call once - immediately after the object is created.
-    void loadDataParts(bool skip_sanity_checks);
+    void loadDataParts(bool skip_sanity_checks, const std::shared_ptr<const TableVersion> & table_version = nullptr);
 
     String getLogName() const { return *std::atomic_load(&log_name); }
 
@@ -1004,6 +1007,17 @@ public:
     /// Returns an object that protects temporary directory from cleanup
     scope_guard getTemporaryPartDirectoryHolder(const String & part_dir_name);
 
+    /// Mutex for parts currently processing in background
+    /// merging (also with TTL), mutating or moving.
+    mutable std::mutex currently_processing_in_background_mutex;
+    mutable std::condition_variable currently_processing_in_background_condition;
+
+    /// Parts that currently participate in merge or mutation.
+    /// This set have to be used with `currently_processing_in_background_mutex`.
+    DataParts currently_merging_mutating_parts;
+
+    DeleteBuffer delete_buffer;
+
 protected:
     friend class IMergeTreeDataPart;
     friend class MergeTreeDataMergerMutator;
@@ -1082,6 +1096,8 @@ protected:
     DataPartsIndexes data_parts_indexes;
     DataPartsIndexes::index<TagByInfo>::type & data_parts_by_info;
     DataPartsIndexes::index<TagByStateAndInfo>::type & data_parts_by_state_and_info;
+
+    std::unordered_map<Int64, MergeTreePartInfo> part_info_by_min_block;
 
     /// Current descriprion of columns of data type Object.
     /// It changes only when set of parts is changed and is

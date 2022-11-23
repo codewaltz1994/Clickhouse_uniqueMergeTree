@@ -17,6 +17,8 @@ class UncompressedCache;
 class MarkCache;
 struct PrewhereExprInfo;
 
+class StorageUniqueMergeTree;
+struct TableVersion;
 
 struct ParallelReadingExtension
 {
@@ -45,7 +47,8 @@ public:
         const MergeTreeReaderSettings & reader_settings_,
         bool use_uncompressed_cache_,
         const Names & virt_column_names_ = {},
-        std::optional<ParallelReadingExtension> extension = {});
+        std::optional<ParallelReadingExtension> extension = {},
+        StorageUniqueMergeTree * unique_mergetree_ = nullptr);
 
     ~MergeTreeBaseSelectProcessor() override;
 
@@ -138,6 +141,9 @@ protected:
     bool no_more_tasks{false};
     std::deque<MergeTreeReadTaskPtr> delayed_tasks;
     std::deque<MarkRanges> buffered_ranges;
+
+    StorageUniqueMergeTree * unique_mergetree;
+    std::shared_ptr<const TableVersion> table_version = nullptr;
 
 private:
     Poco::Logger * log = &Poco::Logger::get("MergeTreeBaseSelectProcessor");

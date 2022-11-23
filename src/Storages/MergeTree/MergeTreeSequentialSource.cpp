@@ -11,6 +11,22 @@ namespace ErrorCodes
     extern const int MEMORY_LIMIT_EXCEEDED;
 }
 
+static void filterColumns(Columns & columns, const IColumn::Filter & filter)
+{
+    for (auto & column : columns)
+	{
+        if (column)
+		{
+            column = column->filter(filter, -1);
+
+            if (column->empty())
+			{
+                columns.clear();
+                return;
+            }
+        }
+    }
+}
 
 /// Lightweight (in terms of logic) stream for reading single part from MergeTree
 /// NOTE:
@@ -26,7 +42,8 @@ public:
         Names columns_to_read_,
         bool read_with_direct_io_,
         bool take_column_types_from_storage,
-        bool quiet = false);
+        bool quiet = false,
+        DeleteBitmapPtr delete_bitmap_ = nullptr);
 
     ~MergeTreeSequentialSource() override;
 
@@ -59,6 +76,8 @@ private:
     using MergeTreeReaderPtr = std::unique_ptr<IMergeTreeReader>;
     MergeTreeReaderPtr reader;
 
+    DeleteBitmapPtr delete_bitmap;
+
     /// current mark at which we stop reading
     size_t current_mark = 0;
 
@@ -77,7 +96,8 @@ MergeTreeSequentialSource::MergeTreeSequentialSource(
     Names columns_to_read_,
     bool read_with_direct_io_,
     bool take_column_types_from_storage,
-    bool quiet)
+    bool quiet,
+    DeleteBitmapPtr delete_bitmap_)
     : ISource(storage_snapshot_->getSampleBlockForColumns(columns_to_read_))
     , storage(storage_)
     , storage_snapshot(storage_snapshot_)
@@ -85,6 +105,7 @@ MergeTreeSequentialSource::MergeTreeSequentialSource(
     , columns_to_read(std::move(columns_to_read_))
     , read_with_direct_io(read_with_direct_io_)
     , mark_cache(storage.getContext()->getMarkCache())
+    , delete_bitmap(delete_bitmap_)
 {
     if (!quiet)
     {
@@ -138,7 +159,7 @@ try
 {
     const auto & header = getPort().getHeader();
 
-    if (!isCancelled() && current_row < data_part->rows_count)
+    while (!isCancelled() && current_row < data_part->rows_count)
     {
         size_t rows_to_read = data_part->index_granularity.getMarkRows(current_mark);
         bool continue_reading = (current_mark != 0);
@@ -149,8 +170,6 @@ try
 
         if (rows_read)
         {
-            current_row += rows_read;
-            current_mark += (rows_to_read == rows_read);
 
             bool should_evaluate_missing_defaults = false;
             reader->fillMissingColumns(columns, should_evaluate_missing_defaults, rows_read);
@@ -161,6 +180,28 @@ try
             }
 
             reader->performRequiredConversions(columns);
+
+            /// leefeng filter deleted data by delete bitmap
+            if (delete_bitmap)
+            {
+                auto col_vec = ColumnUInt8::create(rows_read);
+                auto & data = col_vec->getData();
+
+                UInt8 * pos = data.data();
+
+                for (size_t row = current_row; row < current_row + rows_read; ++row)
+                    *pos++ = !delete_bitmap->deleted(row);
+
+                filterColumns(columns, col_vec->getData());
+            }
+
+            current_row += rows_read;
+            current_mark += (rows_to_read == rows_read);
+
+            if (columns.empty())
+                continue;
+
+            size_t valid_size = !delete_bitmap ? rows_read : columns[0]->size();
 
             /// Reorder columns and fill result block.
             size_t num_columns = sample.size();
@@ -176,13 +217,11 @@ try
                 ++it;
             }
 
-            return Chunk(std::move(res_columns), rows_read);
+            return Chunk(std::move(res_columns), valid_size);
         }
     }
-    else
-    {
-        finish();
-    }
+
+    finish();
 
     return {};
 }
@@ -215,7 +254,8 @@ Pipe createMergeTreeSequentialSource(
     bool read_with_direct_io,
     bool take_column_types_from_storage,
     bool quiet,
-    std::shared_ptr<std::atomic<size_t>> filtered_rows_count)
+    std::shared_ptr<std::atomic<size_t>> filtered_rows_count,
+    DeleteBitmapPtr bitmap)
 {
     /// The part might have some rows masked by lightweight deletes
     const bool need_to_filter_deleted_rows = data_part->hasLightweightDelete();
@@ -224,7 +264,7 @@ Pipe createMergeTreeSequentialSource(
         columns.emplace_back(LightweightDeleteDescription::FILTER_COLUMN.name);
 
     auto column_part_source = std::make_shared<MergeTreeSequentialSource>(
-        storage, storage_snapshot, data_part, columns, read_with_direct_io, take_column_types_from_storage, quiet);
+        storage, storage_snapshot, data_part, columns, read_with_direct_io, take_column_types_from_storage, quiet, bitmap);
 
     Pipe pipe(std::move(column_part_source));
 

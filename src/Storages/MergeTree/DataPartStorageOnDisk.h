@@ -111,6 +111,9 @@ public:
     void changeRootPath(const std::string & from_root, const std::string & to_root) override;
 
     DataPartStorageBuilderPtr getBuilder() const override;
+
+    DiskPtr getDisk() const override;
+
 private:
     VolumePtr volume;
     std::string root_path;

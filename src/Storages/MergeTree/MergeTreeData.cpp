@@ -6653,6 +6653,7 @@ NamesAndTypesList MergeTreeData::getVirtuals() const
     return NamesAndTypesList{
         NameAndTypePair("_part", std::make_shared<DataTypeString>()),
         NameAndTypePair("_part_index", std::make_shared<DataTypeUInt64>()),
+        NameAndTypePair("_part_min_block", std::make_shared<DataTypeInt64>()),
         NameAndTypePair("_part_uuid", std::make_shared<DataTypeUUID>()),
         NameAndTypePair("_partition_id", std::make_shared<DataTypeString>()),
         NameAndTypePair("_partition_value", getPartitionValueType()),

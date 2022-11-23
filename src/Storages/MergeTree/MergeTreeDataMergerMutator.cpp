@@ -36,6 +36,9 @@
 #include <Common/escapeForFileName.h>
 #include <Parsers/queryToString.h>
 
+#include <Storages/StorageUniqueMergeTree.h>
+#include <Storages/UniqueMergeTree/TableVersion.h>
+
 #include <cmath>
 #include <ctime>
 #include <numeric>
@@ -68,6 +71,10 @@ static const double DISK_USAGE_COEFFICIENT_TO_RESERVE = 1.1;
 MergeTreeDataMergerMutator::MergeTreeDataMergerMutator(MergeTreeData & data_, size_t max_tasks_count_)
     : data(data_), max_tasks_count(max_tasks_count_), log(&Poco::Logger::get(data.getLogName() + " (MergerMutator)"))
 {
+    if (data.merging_params.mode == MergeTreeData::MergingParams::Unique)
+	{
+        unique_mergetree = dynamic_cast<StorageUniqueMergeTree *>(&data);
+    }
 }
 
 
@@ -194,6 +201,12 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
     const auto data_settings = data.getSettings();
     auto metadata_snapshot = data.getInMemoryMetadataPtr();
 
+    std::shared_ptr<const TableVersion> table_version = nullptr;
+    if (unique_mergetree)
+    {
+        table_version = unique_mergetree->currentVersion();
+    }
+
     if (data_parts.empty())
     {
         if (out_disable_reason)
@@ -268,8 +281,18 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
             }
         }
 
+        size_t deleted_rows = 0;
+        if (table_version)
+        {
+            deleted_rows
+                = unique_mergetree->deleteBitmapCache().getOrCreate(part, table_version->getPartVersion(part->info))->cardinality();
+        }
+
         IMergeSelector::Part part_info;
-        part_info.size = part->getBytesOnDisk();
+        /// TODO leefeng  here size should be replaced by part->getBytesOnDisk * ((total_rows - deleted_rows) / total_rows)
+        part_info.size = (!deleted_rows || !part->rows_count)
+            ? part->getBytesOnDisk()
+            : part->getBytesOnDisk() * (part->rows_count - deleted_rows) / part->rows_count;
         part_info.age = current_time - part->modification_time;
         part_info.level = part->info.level;
         part_info.data = &part;
@@ -361,6 +384,10 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
     }
 
     LOG_DEBUG(log, "Selected {} parts from {} to {}", parts.size(), parts.front()->name, parts.back()->name);
+    if (table_version)
+	{
+        future_part->table_version = std::move(table_version);
+    }
     future_part->assign(std::move(parts));
     return SelectPartsDecision::SELECTED;
 }
@@ -445,6 +472,10 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectAllPartsToMergeWithinParti
     }
 
     LOG_DEBUG(log, "Selected {} parts from {} to {}", parts.size(), parts.front()->name, parts.back()->name);
+    if (unique_mergetree)
+    {
+        future_part->table_version = unique_mergetree->currentVersion();
+    }
     future_part->assign(std::move(parts));
 
     return SelectPartsDecision::SELECTED;
@@ -484,7 +515,8 @@ MergeTaskPtr MergeTreeDataMergerMutator::mergePartsToTemporaryPart(
     const MergeTreeTransactionPtr & txn,
     const IMergeTreeDataPart * parent_part,
     const IDataPartStorageBuilder * parent_path_storage_builder,
-    const String & suffix)
+    const String & suffix,
+    StorageUniqueMergeTree * storage)
 {
     return std::make_shared<MergeTask>(
         future_part,
@@ -504,7 +536,8 @@ MergeTaskPtr MergeTreeDataMergerMutator::mergePartsToTemporaryPart(
         &data,
         this,
         &merges_blocker,
-        &ttl_merges_blocker);
+        &ttl_merges_blocker,
+        storage);
 }
 
 
@@ -593,6 +626,65 @@ MergeTreeData::DataPartPtr MergeTreeDataMergerMutator::renameMergedTemporaryPart
     return new_data_part;
 }
 
+MergeTreeData::DataPartPtr MergeTreeDataMergerMutator::renameMergedTemporaryPart(
+    MergeTreeData::MutableDataPartPtr & new_data_part,
+    const MergeTreeData::DataPartsVector & parts,
+    const MergeTreeTransactionPtr & txn,
+    MergeTreeData::Transaction & out_transaction,
+    DataPartStorageBuilderPtr builder,
+    StorageUniqueMergeTree & storage,
+    UniqueMergeTreeWriteState & write_state)
+{
+    /// Some of source parts was possibly created in transaction, so non-transactional merge may break isolation.
+    if (data.transactions_enabled.load(std::memory_order_relaxed) && !txn)
+        throw Exception(ErrorCodes::ABORTED, "Cancelling merge, because it was done without starting transaction,"
+                                             "but transactions were enabled for this table");
+
+    /// Rename new part, add to the set and remove original parts.
+    // TODO leefeng for merge commit merged part
+    auto replaced_parts = data.renameTempPartAndReplace(new_data_part, out_transaction, builder, storage, write_state);
+
+    /// Let's check that all original parts have been deleted and only them.
+    if (replaced_parts.size() != parts.size())
+    {
+        /** This is normal, although this happens rarely.
+         *
+         * The situation - was replaced 0 parts instead of N can be, for example, in the following case
+         * - we had A part, but there was no B and C parts;
+         * - A, B -> AB was in the queue, but it has not been done, because there is no B part;
+         * - AB, C -> ABC was in the queue, but it has not been done, because there are no AB and C parts;
+         * - we have completed the task of downloading a B part;
+         * - we started to make A, B -> AB merge, since all parts appeared;
+         * - we decided to download ABC part from another replica, since it was impossible to make merge AB, C -> ABC;
+         * - ABC part appeared. When it was added, old A, B, C parts were deleted;
+         * - AB merge finished. AB part was added. But this is an obsolete part. The log will contain the message `Obsolete part added`,
+         *   then we get here.
+         *
+         * When M > N parts could be replaced?
+         * - new block was added in ReplicatedMergeTreeSink;
+         * - it was added to working dataset in memory and renamed on filesystem;
+         * - but ZooKeeper transaction that adds it to reference dataset in ZK failed;
+         * - and it is failed due to connection loss, so we don't rollback working dataset in memory,
+         *   because we don't know if the part was added to ZK or not
+         *   (see ReplicatedMergeTreeSink)
+         * - then method selectPartsToMerge selects a range and sees, that EphemeralLock for the block in this part is unlocked,
+         *   and so it is possible to merge a range skipping this part.
+         *   (NOTE: Merging with part that is not in ZK is not possible, see checks in 'createLogEntryToMergeParts'.)
+         * - and after merge, this part will be removed in addition to parts that was merged.
+         */
+        LOG_WARNING(log, "Unexpected number of parts removed when adding {}: {} instead of {}", new_data_part->name, replaced_parts.size(), parts.size());
+    }
+    else
+    {
+        for (size_t i = 0; i < parts.size(); ++i)
+            if (parts[i]->name != replaced_parts[i]->name)
+                throw Exception("Unexpected part removed when adding " + new_data_part->name + ": " + replaced_parts[i]->name
+                    + " instead of " + parts[i]->name, ErrorCodes::LOGICAL_ERROR);
+    }
+
+    LOG_TRACE(log, "Merged {} parts: from {} to {}", parts.size(), parts.front()->name, parts.back()->name);
+    return new_data_part;
+}
 
 size_t MergeTreeDataMergerMutator::estimateNeededDiskSpace(const MergeTreeData::DataPartsVector & source_parts)
 {

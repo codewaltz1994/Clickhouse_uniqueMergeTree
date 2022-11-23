@@ -87,12 +87,15 @@ ReadFromMergeTree::ReadFromMergeTree(
     std::shared_ptr<PartitionIdToMaxBlock> max_block_numbers_to_read_,
     Poco::Logger * log_,
     MergeTreeDataSelectAnalysisResultPtr analyzed_result_ptr_,
-    bool enable_parallel_reading)
-    : ISourceStep(DataStream{.header = MergeTreeBaseSelectProcessor::transformHeader(
-        storage_snapshot_->getSampleBlockForColumns(real_column_names_),
-        getPrewhereInfo(query_info_),
-        data_.getPartitionValueType(),
-        virt_column_names_)})
+    bool enable_parallel_reading,
+    StorageUniqueMergeTree * storage_)
+    : ISourceStep(DataStream{
+        .header = MergeTreeBaseSelectProcessor::transformHeader(
+            storage_snapshot_->getSampleBlockForColumns(real_column_names_),
+            getPrewhereInfo(query_info_),
+            data_.getPartitionValueType(),
+            virt_column_names_)})
+    , storage(storage_)
     , reader_settings(getMergeTreeReaderSettings(context_, query_info_))
     , prepared_parts(std::move(parts_))
     , real_column_names(std::move(real_column_names_))
@@ -206,10 +209,21 @@ Pipe ReadFromMergeTree::readFromPool(
         }
 
         auto source = std::make_shared<MergeTreeThreadSelectProcessor>(
-            i, pool, min_marks_for_concurrent_read, max_block_size,
-            settings.preferred_block_size_bytes, settings.preferred_max_column_in_block_size_bytes,
-            data, storage_snapshot, use_uncompressed_cache,
-            prewhere_info, actions_settings, reader_settings, virt_column_names, std::move(extension));
+            i,
+            pool,
+            min_marks_for_concurrent_read,
+            max_block_size,
+            settings.preferred_block_size_bytes,
+            settings.preferred_max_column_in_block_size_bytes,
+            data,
+            storage_snapshot,
+            use_uncompressed_cache,
+            prewhere_info,
+            actions_settings,
+            reader_settings,
+            virt_column_names,
+            std::move(extension),
+            storage);
 
         /// Set the approximate number of rows for the first source only
         /// In case of parallel processing on replicas do not set approximate rows at all.
@@ -245,9 +259,23 @@ ProcessorPtr ReadFromMergeTree::createSource(
     }
 
     return std::make_shared<TSource>(
-            data, storage_snapshot, part.data_part, max_block_size, preferred_block_size_bytes,
-            preferred_max_column_in_block_size_bytes, required_columns, part.ranges, use_uncompressed_cache, prewhere_info,
-            actions_settings, reader_settings, virt_column_names, part.part_index_in_query, has_limit_below_one_block, std::move(extension));
+        data,
+        storage_snapshot,
+        part.data_part,
+        max_block_size,
+        preferred_block_size_bytes,
+        preferred_max_column_in_block_size_bytes,
+        required_columns,
+        part.ranges,
+        use_uncompressed_cache,
+        prewhere_info,
+        actions_settings,
+        reader_settings,
+        virt_column_names,
+        part.part_index_in_query,
+        has_limit_below_one_block,
+        std::move(extension),
+        storage);
 }
 
 Pipe ReadFromMergeTree::readInOrder(
@@ -637,6 +665,9 @@ static void addMergingFinal(
             case MergeTreeData::MergingParams::Graphite:
                 return std::make_shared<GraphiteRollupSortedTransform>(header, num_outputs,
                             sort_description, max_block_size, merging_params.graphite_params, now);
+            case MergeTreeData::MergingParams::Unique:
+                return std::make_shared<MergingSortedTransform>(header, num_outputs,
+                            sort_description, max_block_size, SortingQueueStrategy::Batch);
         }
 
         __builtin_unreachable();
