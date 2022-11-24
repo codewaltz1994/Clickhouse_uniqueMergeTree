@@ -33,4 +33,5 @@ struct TableVersion
 };
 
 using TableVersionPtr = std::unique_ptr<TableVersion>;
+using SharedTableVersionPtr = std::shared_ptr<TableVersion>;
 }

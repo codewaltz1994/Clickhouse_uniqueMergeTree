@@ -259,7 +259,7 @@ void StorageUniqueMergeTree::drop()
     dropAllData();
 }
 
-void StorageUniqueMergeTree::truncate(const ASTPtr &, const StorageMetadataPtr &, ContextPtr, TableExclusiveLockHolder &)
+void StorageUniqueMergeTree::truncate(const ASTPtr &, const StorageMetadataPtr &, ContextPtr local_context, TableExclusiveLockHolder &)
 {
     {
         /// Asks to complete merges and does not allow them to start.
@@ -280,11 +280,14 @@ void StorageUniqueMergeTree::truncate(const ASTPtr &, const StorageMetadataPtr &
 
         try
         {
-            removePartsFromWorkingSet(parts_to_remove, true);
+            removePartsFromWorkingSet(local_context->getCurrentTransaction().get(), parts_to_remove, true, data_parts_lock);
             disk->removeFileIfExists(old_table_version_path);
             disk->moveFile(table_version_path, old_table_version_path);
 
             new_table_version->serialize(table_version_path, disk);
+
+            primary_index_cache.reset();
+            delete_bitmap_cache.reset();
             table_version.set(std::move(new_table_version));
 
             disk->removeFileIfExists(old_table_version_path);
@@ -551,7 +554,8 @@ bool StorageUniqueMergeTree::scheduleDataProcessingJob(BackgroundJobsAssignee & 
 
     if (merge_entry)
     {
-        auto task = std::make_shared<MergePlainMergeTreeTask>(*this, metadata_snapshot, false, Names{}, merge_entry, share_lock, common_assignee_trigger);
+        auto task = std::make_shared<MergePlainUniqueMergeTreeTask>(
+            *this, metadata_snapshot, false, Names{}, merge_entry, share_lock, common_assignee_trigger);
         task->setCurrentTransaction(std::move(transaction_for_merge), std::move(txn));
         bool scheduled = assignee.scheduleMergeMutateTask(task);
         /// The problem that we already booked a slot for TTL merge, but a merge list entry will be created only in a prepare method
@@ -1238,5 +1242,11 @@ ASTPtr StorageUniqueMergeTree::getFetchIndexQuery(
     res_query->setExpression(ASTSelectQuery::Expression::SETTINGS, set_query);
 
     return res_query;
+}
+void StorageUniqueMergeTree::fillNewPartName(MutableDataPartPtr & part, DataPartsLock &)
+{
+    part->info.min_block = part->info.max_block = increment.get();
+    part->info.mutation = 0;
+    part->name = part->getNewName(part->info);
 }
 }

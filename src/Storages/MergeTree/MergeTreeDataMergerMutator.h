@@ -136,17 +136,8 @@ public:
         const MergeTreeData::DataPartsVector & parts,
         const MergeTreeTransactionPtr & txn,
         MergeTreeData::Transaction & out_transaction,
-        DataPartStorageBuilderPtr builder);
-
-    MergeTreeData::DataPartPtr renameMergedTemporaryPart(
-        MergeTreeData::MutableDataPartPtr & new_data_part,
-        const MergeTreeData::DataPartsVector & parts,
-        const MergeTreeTransactionPtr & txn,
-        MergeTreeData::Transaction & out_transaction,
         DataPartStorageBuilderPtr builder,
-        StorageUniqueMergeTree & storage,
-        UniqueMergeTreeWriteState & write_state);
-
+        TableVersionPtr && new_table_version = nullptr);
 
     /// The approximate amount of disk space needed for merge or mutation. With a surplus.
     static size_t estimateNeededDiskSpace(const MergeTreeData::DataPartsVector & source_parts);

@@ -103,6 +103,8 @@ public:
 
     Block getSampleBlockWithDeleteOp() const;
 
+    void fillNewPartName(MutableDataPartPtr & part, DataPartsLock & lock);
+
     ASTPtr getFetchIndexQuery(
         const MergeTreePartition & partition, const std::vector<Field> & min_key_values, const std::vector<Field> & max_key_values);
 
@@ -151,6 +153,7 @@ private:
     bool merge(
         bool aggressive,
         const String & partition_id,
+        bool final,
         bool deduplicate,
         const Names & deduplicate_by_columns,
         const MergeTreeTransactionPtr & txn,

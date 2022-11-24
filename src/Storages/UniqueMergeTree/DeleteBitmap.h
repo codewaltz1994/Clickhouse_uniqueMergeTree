@@ -31,8 +31,8 @@ public:
 
     size_t cardinality() const;
 
-    void serialize(const String & dir_path, DiskPtr disk) const; /// dir_path = deletes/part_1_1_0/
-    void deserialize(const String & full_path, DiskPtr disk); /// full_path = deletes/part_1_1_0/version.bitmap
+    void serialize(const String & dir_path, DiskPtr disk) const; /// dir_path = deletes/
+    void deserialize(const String & full_path, DiskPtr disk); /// full_path = deletes/version.bitmap
 
     DeleteBitmap & operator=(const DeleteBitmap & rhs);
 

@@ -3,8 +3,8 @@
 #include <Storages/MergeTree/IMergeTreeDataPart.h>
 #include <Storages/MergeTree/MergeTreePartInfo.h>
 #include <Storages/UniqueMergeTree/DeleteBitmap.h>
+#include <Common/CacheBase.h>
 #include <Common/HashTable/Hash.h>
-#include <Common/LRUResourceCache.h>
 #include <Common/SipHash.h>
 
 namespace DB
@@ -31,10 +31,10 @@ struct BitmapCacheKeyHash
     }
 };
 
-class DeleteBitmapCache : public LRUResourceCache<BitmapCacheKey, DeleteBitmap, BitmapCacheKeyHash>
+class DeleteBitmapCache : public CacheBase<BitmapCacheKey, DeleteBitmap, BitmapCacheKeyHash>
 {
 public:
-    explicit DeleteBitmapCache() : LRUResourceCache(1024) { }
+    explicit DeleteBitmapCache() : CacheBase(1024) { }
 
     DeleteBitmapPtr getOrCreate(const MergeTreeDataPartPtr & part, UInt64 version);
 
