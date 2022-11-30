@@ -2358,6 +2358,19 @@ void MergeTreeData::checkAlterIsPossible(const AlterCommands & commands, Context
         /// We don't process sample_by_ast separately because it must be among the primary key columns
         /// and we don't process primary_key_expr separately because it is a prefix of sorting_key_expr.
     }
+
+    if (old_metadata.hasUniqueKey())
+    {
+        auto unique_key_expr = old_metadata.getUniqueKey().expression;
+        for (const auto & action : unique_key_expr->getActions())
+        {
+            for (const auto * child : action.node->children)
+                columns_alter_type_forbidden.insert(child->result_name);
+        }
+        for (const String & col : unique_key_expr->getRequiredColumns())
+            columns_alter_type_metadata_only.insert(col);
+    }
+
     if (!merging_params.sign_column.empty())
         columns_alter_type_forbidden.insert(merging_params.sign_column);
 
@@ -2630,9 +2643,17 @@ void MergeTreeData::checkAlterIsPossible(const AlterCommands & commands, Context
 }
 
 
-void MergeTreeData::checkMutationIsPossible(const MutationCommands & /*commands*/, const Settings & /*settings*/) const
+void MergeTreeData::checkMutationIsPossible(const MutationCommands & commands, const Settings & /*settings*/) const
 {
-    /// Some validation will be added
+    if (merging_params.mode == MergingParams::Unique)
+    {
+        for (const auto & command : commands)
+        {
+            if (command.type == MutationCommand::Type::DELETE || command.type == MutationCommand::Type::UPDATE)
+                throw DB::Exception(
+                    "UPDATE/DELETE mutation command is not supported for StorageUniqueMergeTree", ErrorCodes::SUPPORT_IS_DISABLED);
+        }
+    }
 }
 
 MergeTreeDataPartType MergeTreeData::choosePartType(size_t bytes_uncompressed, size_t rows_count) const
@@ -3805,6 +3826,14 @@ void MergeTreeData::checkAlterPartitionIsPossible(
 {
     for (const auto & command : commands)
     {
+        if (merging_params.mode == MergingParams::Unique)
+        {
+            if (command.type != PartitionCommand::Type::MOVE_PARTITION
+                || (command.move_destination_type != PartitionCommand::MoveDestinationType::DISK
+                    && command.move_destination_type == PartitionCommand::MoveDestinationType::VOLUME))
+                throw DB::Exception("Unsupported ALTER PARTITION command for StorageUniqueMergeTree", ErrorCodes::SUPPORT_IS_DISABLED);
+        }
+
         if (command.type == PartitionCommand::DROP_DETACHED_PARTITION
             && !settings.allow_drop_detached)
             throw DB::Exception("Cannot execute query: DROP DETACHED PART is disabled "

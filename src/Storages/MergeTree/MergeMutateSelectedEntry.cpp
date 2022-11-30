@@ -21,7 +21,7 @@ CurrentlyMergingPartsTagger::CurrentlyMergingPartsTagger(
 
     /// if we mutate part, than we should reserve space on the same disk, because mutations possible can create hardlinks
     if (is_mutation)
-        reserved_space = storage.tryReserveSpace(total_size, future_part->parts[0]->volume);
+        reserved_space = storage.tryReserveSpace(total_size, future_part->parts[0]->data_part_storage);
     else
     {
         IMergeTreeDataPart::TTLInfos ttl_infos;
@@ -29,7 +29,7 @@ CurrentlyMergingPartsTagger::CurrentlyMergingPartsTagger(
         for (auto & part_ptr : future_part->parts)
         {
             ttl_infos.update(part_ptr->ttl_infos);
-            max_volume_index = std::max(max_volume_index, storage.getStoragePolicy()->getVolumeIndexByDisk(part_ptr->volume->getDisk()));
+            max_volume_index = std::max(max_volume_index, part_ptr->data_part_storage->getVolumeIndex(*storage.getStoragePolicy()));
         }
 
         reserved_space = storage.balancedReservation(
@@ -59,7 +59,7 @@ CurrentlyMergingPartsTagger::CurrentlyMergingPartsTagger(
 
     for (const auto & part : future_part->parts)
     {
-        if (storage.currently_merging_mutating_parts.count(part))
+        if (storage.currently_merging_mutating_parts.contains(part))
             throw Exception("Tagging already tagged part " + part->name + ". This is a bug.", ErrorCodes::LOGICAL_ERROR);
     }
     storage.currently_merging_mutating_parts.insert(future_part->parts.begin(), future_part->parts.end());
@@ -70,7 +70,7 @@ CurrentlyMergingPartsTagger::~CurrentlyMergingPartsTagger()
     std::lock_guard lock(storage.currently_processing_in_background_mutex);
     for (const auto & part : future_part->parts)
     {
-        if (!storage.currently_merging_mutating_parts.count(part))
+        if (!storage.currently_merging_mutating_parts.contains(part))
             std::terminate();
         storage.currently_merging_mutating_parts.erase(part);
     }

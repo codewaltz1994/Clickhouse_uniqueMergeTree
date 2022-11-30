@@ -10,6 +10,8 @@
 #include <DataTypes/DataTypeNothing.h>
 #include <bit>
 
+#include <Storages/StorageUniqueMergeTree.h>
+
 #ifdef __SSE2__
 #include <emmintrin.h>
 #endif
@@ -892,7 +894,7 @@ MergeTreeRangeReader::ReadResult MergeTreeRangeReader::read(size_t max_rows, Mar
     if (read_result.num_rows == 0)
         return read_result;
 
-    executePrewhereActionsAndFilterColumns(read_result);
+    executePrewhereActionsAndFilterColumns(read_result, bitmap_filter);
 
     return read_result;
 }

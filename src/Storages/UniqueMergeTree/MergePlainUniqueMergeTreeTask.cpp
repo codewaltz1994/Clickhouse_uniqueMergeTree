@@ -188,6 +188,7 @@ void MergePlainUniqueMergeTreeTask::finish()
 
     auto new_table_version = std::make_unique<TableVersion>(*storage.currentVersion());
     new_table_version->version++;
+
     if (!new_table_version->part_versions.insert({new_part->info, new_table_version->version}).second)
     {
         throw Exception(

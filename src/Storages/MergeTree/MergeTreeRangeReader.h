@@ -19,7 +19,7 @@ class ExpressionActions;
 using ExpressionActionsPtr = std::shared_ptr<ExpressionActions>;
 
 class StorageUniqueMergeTree;
-class TableVersion;
+struct TableVersion;
 
 struct PrewhereExprStep
 {

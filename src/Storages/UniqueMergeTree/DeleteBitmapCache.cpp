@@ -16,7 +16,7 @@ DeleteBitmapPtr DeleteBitmapCache::getOrCreate(const MergeTreeDataPartPtr & part
         return it;
 
     auto disk = part->data_part_storage->getDisk();
-    String full_path = part->getFullRelativePath() + StorageUniqueMergeTree::DELETE_DIR_NAME + toString(version) + ".bitmap";
+    String full_path = part->data_part_storage->getRelativePath() + StorageUniqueMergeTree::DELETE_DIR_NAME + toString(version) + ".bitmap";
     if (!disk->exists(full_path))
     {
         throw Exception(

@@ -16,7 +16,7 @@
 namespace DB
 {
 
-class UniqueMergeTreeWriteState;
+struct UniqueMergeTreeWriteState;
 
 struct BlockWithPartition
 {

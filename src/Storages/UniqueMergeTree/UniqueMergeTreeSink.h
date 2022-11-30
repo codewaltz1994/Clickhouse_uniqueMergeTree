@@ -2,7 +2,10 @@
 
 #include <Processors/Sinks/SinkToStorage.h>
 #include <Storages/StorageInMemoryMetadata.h>
+#include <Storages/UniqueMergeTree/PrimaryIndex.h>
+#include <Storages/UniqueMergeTree/TableVersion.h>
 
+#include <Common/logger_useful.h>
 
 namespace DB
 {
@@ -35,7 +38,16 @@ private:
     struct DelayedChunk;
     std::unique_ptr<DelayedChunk> delayed_chunk;
 
+    Poco::Logger * log;
+
     void finishDelayedChunk();
+
+    using MutableDataPartPtr = std::shared_ptr<IMergeTreeDataPart>;
+    TableVersionPtr updateDeleteBitmapAndTableVersion(
+        MutableDataPartPtr & part,
+        const MergeTreePartInfo & part_info,
+        PrimaryIndex::DeletesMap & deletes_map,
+        const PrimaryIndex::DeletesKeys & deletes_keys);
 };
 
 }

@@ -80,7 +80,7 @@ void DeleteBitmap::serialize(const String & dir_path, DiskPtr disk) const
 {
     if (!disk->exists(dir_path))
     {
-        disk->createDirectory(dir_path);
+        disk->createDirectories(dir_path);
     }
     const String full_path = dir_path + "/" + toString(version) + ".bitmap";
     if (!disk->exists(full_path))

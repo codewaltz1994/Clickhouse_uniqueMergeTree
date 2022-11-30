@@ -5,6 +5,8 @@
 #include <Storages/UniqueMergeTree/UniqueMergeTreeSink.h>
 #include <Storages/UniqueMergeTree/UniqueMergeTreeWriteState.h>
 
+#include <Common/logger_useful.h>
+
 namespace ProfileEvents
 {
 extern const Event DuplicatedInsertedBlocks;
@@ -13,96 +15,92 @@ extern const Event DuplicatedInsertedBlocks;
 namespace DB
 {
 
-namespace
+TableVersionPtr UniqueMergeTreeSink::updateDeleteBitmapAndTableVersion(
+    MutableDataPartPtr & part,
+    const MergeTreePartInfo & part_info,
+    PrimaryIndex::DeletesMap & deletes_map,
+    const PrimaryIndex::DeletesKeys & deletes_keys)
 {
-    using MutableDataPartPtr = std::shared_ptr<IMergeTreeDataPart>;
-    TableVersionPtr updateDeleteBitmapAndTableVersion(
-        MutableDataPartPtr & part,
-        const MergeTreePartInfo & part_info,
-        StorageUniqueMergeTree & storage,
-        PrimaryIndex::DeletesMap & deletes_map,
-        const PrimaryIndex::DeletesKeys & deletes_keys)
-    {
-        /// Note: delete bitmap located in the directory of data part(in same disk),
-        /// but table version always located in the first disk
-        auto new_part_data_path = part->data_part_storage->getRelativePath();
-        auto current_version = storage.currentVersion();
-        auto new_table_version = std::make_unique<TableVersion>(*current_version);
-        new_table_version->version++;
+    /// Note: delete bitmap located in the directory of data part(in same disk),
+    /// but table version always located in the first disk
+    auto new_part_data_path = part->data_part_storage->getRelativePath();
+    auto current_version = storage.currentVersion();
+    auto new_table_version = std::make_unique<TableVersion>(*current_version);
+    new_table_version->version++;
 
-        if (!new_table_version->part_versions.insert({part_info, new_table_version->version}).second)
+    if (!new_table_version->part_versions.insert({part_info, new_table_version->version}).second)
+    {
+        throw Exception(
+            ErrorCodes::LOGICAL_ERROR,
+            "Insert new inserted part version into table version failed, this is a bug, new part name: {}",
+            part_info.getPartName());
+    }
+
+    /// Generate delete bitmap for new part
+    auto new_delete_bitmap = std::make_shared<DeleteBitmap>();
+    new_delete_bitmap->setVersion(new_table_version->version);
+    if (auto it = deletes_map.find(part_info.min_block); it != deletes_map.end())
+    {
+        LOG_INFO(storage.log, "{} rows deleted for new inserted part {}", it->second.size(), part_info.getPartName());
+        new_delete_bitmap->addDels(it->second);
+        deletes_map.erase(it);
+    }
+    new_delete_bitmap->serialize(new_part_data_path + StorageUniqueMergeTree::DELETE_DIR_NAME, part->data_part_storage->getDisk());
+    auto & delete_bitmap_cache = storage.deleteBitmapCache();
+    delete_bitmap_cache.set({part_info, new_table_version->version}, new_delete_bitmap);
+
+    /// Update delete bitmap
+    /// leefeng, here find part info by min_block
+    for (const auto & [min_block, row_numbers] : deletes_map)
+    {
+        auto info = storage.findPartInfoByMinBlock(min_block);
+        auto update_part = storage.findPartByInfo(info);
+        if (!update_part)
+        {
+            throw Exception(
+                ErrorCodes::LOGICAL_ERROR, "Can not find part in data_parts_by_info, this is a bug, part name: {}", info.getPartName());
+        }
+        /// The part is do merging, add its deleted keys to delete buffer
+        if (storage.currently_merging_mutating_parts.find(update_part) != storage.currently_merging_mutating_parts.end())
+        {
+            storage.delete_buffer.insertKeysByInfo(info, deletes_keys.at(min_block));
+            /// Here even if the part is merging, we still should update its delete bitmap,
+            /// such that even if the merge failed or abort due to too much deletes, the data
+            /// still consistent.
+            // continue;
+        }
+        const auto & part_version = current_version->part_versions.find(info);
+        if (part_version == current_version->part_versions.end())
+        {
+            throw Exception("Can not find part versions in table version", ErrorCodes::LOGICAL_ERROR);
+        }
+
+        LOG_INFO(
+            storage.log,
+            "{} rows deleted for part {} when insert into part {}",
+            row_numbers.size(),
+            info.getPartName(),
+            part_info.getPartName());
+
+        auto bitmap = delete_bitmap_cache.getOrCreate(update_part, part_version->second);
+        auto new_bitmap = bitmap->addDelsAsNewVersion(new_table_version->version, row_numbers);
+        auto bitmap_path = update_part->data_part_storage->getRelativePath() + StorageUniqueMergeTree::DELETE_DIR_NAME;
+        new_bitmap->serialize(bitmap_path, update_part->data_part_storage->getDisk());
+
+        if (auto it = new_table_version->part_versions.find(info); it != new_table_version->part_versions.end())
+        {
+            it->second = new_table_version->version;
+        }
+        else
         {
             throw Exception(
                 ErrorCodes::LOGICAL_ERROR,
-                "Insert new inserted part version into table version failed, this is a bug, new part name: {}",
-                part->info.getPartName());
+                "Can not find old part version in table version, this is a bug, part name: {}",
+                info.getPartName());
         }
-        /// Generate delete bitmap for new part
-        auto new_delete_bitmap = std::make_shared<DeleteBitmap>();
-        new_delete_bitmap->setVersion(new_table_version->version);
-        if (auto it = deletes_map.find(part_info.min_block); it != deletes_map.end())
-        {
-            LOG_INFO(log, "{} rows deleted for new inserted part {}", it->second.size(), part_info.getPartName());
-            new_delete_bitmap->addDels(it->second);
-            deletes_map.erase(it);
-        }
-        new_delete_bitmap->serialize(new_part_data_path + StorageUniqueMergeTree::DELETE_DIR_NAME, part->data_part_storage->getDisk());
-        auto & delete_bitmap_cache = storage.deleteBitmapCache();
-        delete_bitmap_cache.set({part_info, new_table_version->version}, new_delete_bitmap);
-
-        /// Update delete bitmap
-        /// leefeng, here find part info by min_block
-        for (const auto & [min_block, row_numbers] : deletes_map)
-        {
-            auto info = storage.findPartInfoByMinBlock(min_block);
-            auto update_part = storage.findPartByInfo(info);
-            if (!update_part)
-            {
-                throw Exception(
-                    ErrorCodes::LOGICAL_ERROR, "Can not find part in data_parts_by_info, this is a bug, part name: {}", info.getPartName());
-            }
-            /// The part is do merging, add its deleted keys to delete buffer
-            if (storage.currently_merging_mutating_parts.find(update_part) != storage.currently_merging_mutating_parts.end())
-            {
-                storage.delete_buffer.insertKeysByInfo(info, deletes_keys.at(min_block));
-                /// Here even if the part is merging, we still should update its delete bitmap,
-                /// such that even if the merge failed or abort due to too much deletes, the data
-                /// still consistent.
-                // continue;
-            }
-            const auto & part_version = current_version->part_versions.find(info);
-            if (part_version == current_version->part_versions.end())
-            {
-                throw Exception("Can not find part versions in table version", ErrorCodes::LOGICAL_ERROR);
-            }
-
-            LOG_INFO(
-                log,
-                "{} rows deleted for part {} when insert into part {}",
-                row_numbers.size(),
-                info.getPartName(),
-                part_info.getPartName());
-
-            auto bitmap = delete_bitmap_cache.getOrCreate(update_part, part_version->second);
-            auto new_bitmap = bitmap->addDelsAsNewVersion(new_table_version->version, row_numbers);
-            auto bitmap_path = update_part->data_part_storage->getRelativePath() + StorageUniqueMergeTree::DELETE_DIR_NAME;
-            new_bitmap->serialize(bitmap_path, update_part->data_part_storage->getDisk());
-
-            if (auto it = new_table_version->part_versions.find(info); it != new_table_version->part_versions.end())
-            {
-                it->second = new_table_version->version;
-            }
-            else
-            {
-                throw Exception(
-                    ErrorCodes::LOGICAL_ERROR,
-                    "Can not find old part version in table version, this is a bug, part name: {}",
-                    info.getPartName());
-            }
-            delete_bitmap_cache.set({info, new_table_version->version}, new_bitmap);
-        }
-        return new_table_version;
+        delete_bitmap_cache.set({info, new_table_version->version}, new_bitmap);
     }
+    return new_table_version;
 }
 
 UniqueMergeTreeSink::~UniqueMergeTreeSink() = default;
@@ -114,6 +112,7 @@ UniqueMergeTreeSink::UniqueMergeTreeSink(
     , metadata_snapshot(metadata_snapshot_)
     , max_parts_per_block(max_parts_per_block_)
     , context(context_)
+    , log(&Poco::Logger::get("UniqueMergeTree(" + storage.getStorageID().getFullTableName() + ")"))
 {
 }
 
@@ -148,7 +147,7 @@ void UniqueMergeTreeSink::consume(Chunk chunk)
     auto block = getHeader().cloneWithColumns(chunk.detachColumns());
     auto storage_snapshot = storage.getStorageSnapshot(metadata_snapshot, context);
 
-    auto part_blocks = storage.writer.splitBlockIntoParts(block, max_parts_per_block, metadata_snapshot, context);
+    auto part_blocks = storage.writer.splitBlockIntoParts(block, max_parts_per_block, metadata_snapshot, context, true);
 
     using DelayedPartitions = std::vector<UniqueMergeTreeSink::DelayedChunk::Partition>;
     DelayedPartitions partitions;
@@ -211,7 +210,10 @@ void UniqueMergeTreeSink::consume(Chunk chunk)
         }
 
         partitions.emplace_back(UniqueMergeTreeSink::DelayedChunk::Partition{
-            .temp_part = std::move(temp_part), .elapsed_ns = elapsed_ns, .block_dedup_token = std::move(block_dedup_token)});
+            .temp_part = std::move(temp_part),
+            .write_state = std::move(write_state),
+            .elapsed_ns = elapsed_ns,
+            .block_dedup_token = std::move(block_dedup_token)});
     }
 
     finishDelayedChunk();
@@ -253,7 +255,6 @@ void UniqueMergeTreeSink::finishDelayedChunk()
             {
                 /// TODO leefeng, update primary index and delete bitmap should in here
                 std::lock_guard<std::mutex> write_merge_lock(storage.write_merge_lock);
-                std::lock_guard<std::mutex> background_lock(storage.currently_processing_in_background_mutex);
                 /// Here we should lock currently_processing_in_background_mutex, then lockParts(), otherwise deadlock
                 /// will happen. since in scheduleDataProcessingJob(), it will first lock currently_processing_in_background_mutex,
                 /// then lockParts() in selectPartsToMerge().
@@ -279,7 +280,7 @@ void UniqueMergeTreeSink::finishDelayedChunk()
                         write_state.max_key_values,
                         deletes_map,
                         deletes_keys,
-                        write_state.context);
+                        context);
                 }
                 else
                 {
@@ -291,13 +292,17 @@ void UniqueMergeTreeSink::finishDelayedChunk()
                         write_state.max_key_values,
                         deletes_map,
                         deletes_keys,
-                        write_state.context);
+                        context);
                 }
                 /// Now, the cache in primary index has update, we should mark
                 /// the primary index to UPDATED state
                 if (!deletes_map.empty())
                     primary_index->setState(PrimaryIndex::State::UPDATED);
-                auto new_table_version = updateDeleteBitmapAndTableVersion(part, part_info, storage, deletes_map, deletes_keys);
+
+                /// Should lock after update PrimaryIndex, otherwise, dead lock will happen in
+                /// StorageUniqueMergeTree::getFirstAlterMutationCommandsForPart
+                std::lock_guard<std::mutex> background_lock(storage.currently_processing_in_background_mutex);
+                auto new_table_version = updateDeleteBitmapAndTableVersion(part, part_info, deletes_map, deletes_keys);
 
                 auto lock = storage.lockParts();
 

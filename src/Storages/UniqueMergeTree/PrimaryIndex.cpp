@@ -4,6 +4,7 @@
 #include <IO/WriteBufferFromString.h>
 #include <IO/WriteHelpers.h>
 #include <QueryPipeline/QueryPipeline.h>
+#include <QueryPipeline/QueryPipelineBuilder.h>
 #include <Storages/StorageUniqueMergeTree.h>
 #include <Storages/UniqueMergeTree/PrimaryIndex.h>
 #include <Storages/UniqueMergeTree/PrimaryKeysEncoder.h>
@@ -122,7 +123,7 @@ void PrimaryIndex::update(
     LOG_INFO(log, "Starting fetch and construct primary index");
 
     auto query = storage.getFetchIndexQuery(partition, min_key_values, max_key_values);
-    const InterpreterSelectQuery fetch_index(query, context, SelectQueryOptions(QueryProcessingStage::Complete));
+    InterpreterSelectQuery fetch_index(query, context, SelectQueryOptions(QueryProcessingStage::Complete));
 
     auto builder = fetch_index.buildQueryPipeline();
     auto pipeline = QueryPipelineBuilder::getPipeline(std::move(builder));
